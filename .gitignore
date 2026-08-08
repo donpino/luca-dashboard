@@ -1,0 +1,35 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+
+# Node / web
+node_modules/
+dist/
+.vite/
+
+# Generated data — build artifact, not committed (see CLAUDE.md, Layout note)
+web/public/data/
+
+# Secrets — live only in GitHub Actions secrets (CLAUDE.md rule 8)
+.env
+.env.*
+!.env.example
+
+# Raw Garmin activity JSON and full database dumps are never committed to
+# this public repo: archive/ includes GPS polylines and start locations,
+# backups/ (pg_dump) includes the free-text `journal` column. Both are
+# privacy data under DASHBOARD_SPEC.md §11 and are not passed through
+# metrics.py's coordinate-stripping gate the way web/public/data/ is — do
+# not remove these lines. Both sync to a private Supabase Storage bucket
+# instead (see DASHBOARD_SPEC.md §4).
+archive/*
+backups/*
+!archive/.gitkeep
+!backups/.gitkeep
+
+# OS
+.DS_Store

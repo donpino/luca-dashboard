@@ -50,6 +50,29 @@ implements what was decided.
    GitHub Actions secrets. Never in code, never in a `.env` that gets committed,
    never in the client bundle.
 9. **No surname, club name, or photograph** anywhere in the repo or the site.
+10. **Every new table needs explicit grants, not just RLS.** This Supabase
+    project has table auto-exposure disabled, so PostgREST rejects any
+    request with no table-level grant, regardless of RLS policy. Every
+    migration that creates a table reachable via the Data API must grant
+    `select, insert, update, delete` to `authenticated` and grant nothing to
+    `anon`. Grants and RLS are independent gates; both are required.
+11. **Every `plpgsql` function sets `search_path = ''`** and schema-qualifies
+    every built-in it calls (e.g. `pg_catalog.now()`, not `now()`). An
+    unpinned search path on a `SECURITY DEFINER`-adjacent function is a
+    privilege-escalation vector.
+12. **A nullable field is never coerced to a default in the compute layer.**
+    Specifically: a null `shin` is not zero. Null means unanswered; zero
+    means assessed with no pain. `compute/metrics.py` must preserve that
+    distinction all the way to the output JSON.
+13. **If an implementation needs something the spec doesn't describe, update
+    `DASHBOARD_SPEC.md` in the same commit.** There is no such thing as a
+    documented deviation — the spec is the contract, and an implementation
+    that has quietly outgrown it is a spec that's wrong.
+14. **`archive/` and `backups/` are gitignored permanently.** The repo is
+    public. `archive/` holds raw Garmin JSON with GPS polylines and start
+    locations; `backups/` holds full `pg_dump` output including the
+    free-text `journal` column. Neither passes through `metrics.py`'s
+    coordinate-stripping gate, so neither may ever reach the repo.
 
 ## Stack
 

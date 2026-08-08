@@ -94,10 +94,11 @@ threshold and displays `insufficient data — 14/60 days` instead. See §8.4.
 └──────────────────────────┬──────────────────────────────┘
                            │  secrets: GitHub Actions only
 ┌─ STORE ───────────────── ▼ ─────────────────────────────┐
-│  Supabase Postgres  — system of record                  │
-│  repo /archive/     — raw Garmin JSON per activity, gz  │
-│  repo /backups/     — nightly pg_dump (free tier has    │
-│                       no backups; this is the fix)      │
+│  Supabase Postgres     — system of record                │
+│  Supabase Storage      — private bucket:                 │
+│    archive/            raw Garmin JSON per activity, gz  │
+│    backups/            nightly pg_dump (free tier has    │
+│                         no backups; this is the fix)     │
 └──────────────────────────┬──────────────────────────────┘
 ┌─ COMPUTE ──────────────── ▼ ────────────────────────────┐
 │  metrics.py  — §7 definitions, strips coordinates,      │
@@ -137,6 +138,7 @@ unit test asserts no output JSON contains a key matching `/lat|lon|coord|polylin
 | `illness` | bool | only habit with an unambiguous effect in prior data |
 | `study_hours` | numeric | captured now, rendered ~2027 |
 | `journal` | text | prompt: *"What most affected your recovery and sleep today?"* |
+| `updated_at` | timestamptz, not null, default `now()` | sync is an upsert (§6); this is the only way to tell when a row was last written. Set on insert by default and refreshed on every update by a trigger. |
 
 ### `biometrics` — Garmin, one row per day
 `date` PK · `sleep_total_min` · `sleep_deep_min` · `sleep_rem_min` ·
@@ -319,6 +321,8 @@ same information, survives colour-blindness, and doesn't editorialise.
 3. No surname, no club name, no photograph.
 4. Public site is read-only. All writes go through authenticated `/log`.
 5. Secrets exist only in GitHub Actions secrets. Never in the repo, never in the bundle.
+6. Raw activity JSON and database dumps are never committed to the public
+   repository. They live in a private Supabase Storage bucket (§4).
 
 ---
 
