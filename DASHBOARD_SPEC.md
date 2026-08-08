@@ -1,11 +1,17 @@
-# Training Dashboard — Build Spec v1
+# Training Dashboard — Build Spec v1.1
 
 **Athlete:** Luca · **Campaign:** middle-distance, Foundation block → 2032
-**Status:** spec locked, build not started · **Date:** 3 Aug 2026
+**Status:** Phase 0 in progress — `daily` table applied, `/log` route next · **Date:** 8 Aug 2026
 
 This document is the contract. It goes in the repo root alongside `CLAUDE.md`.
 Anything not defined here is an open question, not an implementation detail to
 improvise. If the build needs a decision this file doesn't contain, stop and ask.
+
+**Amendments in v1.1 (8 Aug 2026)** — all forced by Phase 0 implementation:
+`archive/` and `backups/` move out of the repo to private Supabase Storage
+(§4, §11.6); the render layer is a two-entry static build with no client router
+(§4); null-vs-zero for `shin` is defined and made binding on the compute and
+render layers (§5, §7, §10); the `/log` form layout is settled and locked (§8.5).
 
 ---
 
@@ -94,11 +100,11 @@ threshold and displays `insufficient data — 14/60 days` instead. See §8.4.
 └──────────────────────────┬──────────────────────────────┘
                            │  secrets: GitHub Actions only
 ┌─ STORE ───────────────── ▼ ─────────────────────────────┐
-│  Supabase Postgres     — system of record                │
-│  Supabase Storage      — private bucket:                 │
-│    archive/            raw Garmin JSON per activity, gz  │
-│    backups/            nightly pg_dump (free tier has    │
-│                         no backups; this is the fix)     │
+│  Supabase Postgres  — system of record                  │
+│  Storage: archive/  — raw Garmin JSON per activity, gz   │
+│  Storage: backups/  — nightly pg_dump (free tier has    │
+│                       no backups; this is the fix)      │
+│  Both buckets PRIVATE, never in the repo — §11.6        │
 └──────────────────────────┬──────────────────────────────┘
 ┌─ COMPUTE ──────────────── ▼ ────────────────────────────┐
 │  metrics.py  — §7 definitions, strips coordinates,      │
@@ -106,7 +112,7 @@ threshold and displays `insufficient data — 14/60 days` instead. See §8.4.
 └──────────────────────────┬──────────────────────────────┘
 ┌─ RENDER ───────────────── ▼ ────────────────────────────┐
 │  Vite + React + ECharts → GitHub Pages (public, RO)     │
-│  /log route → Supabase Auth + RLS (write, private)      │
+│  /log/ route → Supabase Auth + RLS (write, private)     │
 └─────────────────────────────────────────────────────────┘
 ```
 
@@ -118,6 +124,26 @@ screen was computed in `metrics.py` and is therefore testable and versioned.
 Latitude and longitude are dropped before any file is written to `public/`. A
 unit test asserts no output JSON contains a key matching `/lat|lon|coord|polyline/`.
 
+**Two build entries, no client router.** The render layer is a static
+multi-page build: `web/index.html` (public dashboard) and `web/log/index.html`
+(the write surface). `/log/` therefore resolves as a real path on GitHub Pages
+with no `404.html` redirect trick, and — the actual reason — **the public
+dashboard bundle contains no auth code, no Supabase client, and no write
+path.** The only credential in any bundle is the publishable key, which ships
+only in the `/log/` entry. All fonts are self-hosted; the site makes no
+third-party requests.
+
+**Raw archives and backups never touch the repo.** They live in private
+Supabase Storage buckets. `archive/` holds unstripped Garmin JSON — GPS
+polylines and start locations included — and `backups/` holds `pg_dump` output
+including the free-text `journal` column. Neither passes through the
+coordinate-stripping gate, so neither may reach a public repo. See §11.6.
+
+**`VITE_BASE_PATH`** is the deploy-time variable carrying the GitHub Pages
+subpath (e.g. `/luca-dashboard/`), consumed by `vite.config.ts` as the build's
+`base`. It defaults to `/` locally, so a developer never needs to set it to
+run the site on a dev server.
+
 ---
 
 ## 5. Data model (Supabase)
@@ -126,7 +152,7 @@ unit test asserts no output JSON contains a key matching `/lat|lon|coord|polylin
 | Column | Type | Notes |
 |---|---|---|
 | `date` | date, PK | |
-| `shin` | int 0–3 | **First field on the form.** Gates everything. |
+| `shin` | int 0–3, **nullable, no default** | **First field on the form.** Gates everything. See the null rule below. |
 | `creatine` | bool | prescribed daily, no cycling |
 | `protein_breakfast` | bool | the named fuelling gap |
 | `alcohol` | bool | **ticked = any alcohol consumed.** No ambiguity. |
@@ -136,9 +162,19 @@ unit test asserts no output JSON contains a key matching `/lat|lon|coord|polylin
 | `breathing_exercises` | bool | |
 | `stretching` | bool | recovery habit — **not** logged as a shin measure |
 | `illness` | bool | only habit with an unambiguous effect in prior data |
-| `study_hours` | numeric | captured now, rendered ~2027 |
+| `study_hours` | numeric, nullable | captured now, rendered ~2027. Untouched submits `NULL`; `0` is a real value in term time. |
 | `journal` | text | prompt: *"What most affected your recovery and sleep today?"* |
-| `updated_at` | timestamptz, not null, default `now()` | sync is an upsert (§6); this is the only way to tell when a row was last written. Set on insert by default and refreshed on every update by a trigger. |
+
+**The null rule for `shin` — binding on every layer.**
+`shin` is nullable and has **no default**. `NULL` means *not answered*; `0`
+means *assessed, no pain*. Collapsing the two would print a false all-clear on
+the shin-vs-rolling-km panel, which is the primary periostitis warning on the
+site — the one chart the dashboard exists for. Therefore:
+
+- The `/log` form never pre-selects a value and refuses to submit without one,
+  so `NULL` can only ever mean *a day that was never logged*.
+- `metrics.py` never coerces, fills, interpolates, or zero-fills it.
+- The render layer gives it a third marker state — see §7 `shin_series` and §10.
 
 ### `biometrics` — Garmin, one row per day
 `date` PK · `sleep_total_min` · `sleep_deep_min` · `sleep_rem_min` ·
@@ -200,12 +236,16 @@ These are binding. The frontend must not recompute or reinterpret them.
 | `rhr_baseline` | 30-day rolling median. Band = ±1 MAD. **Never spans the device break.** |
 | `hrv_baseline` | 7-day mean vs 30-day mean, plus Garmin's own HRV Status when available. Requires ≥ 21 days on FR70 before rendering at all. |
 | `impact_mechanics` | Per run: `avg_cadence`, `avg_vertical_oscillation`, `avg_vertical_ratio`, joined to `daily.shin` at date + 1 and date + 2. |
+| `shin_series` | `daily.shin` joined to `rolling_7d_km` by date. **`NULL` is never coerced to `0`.** A missing day renders as a gap in the step series with a distinct unfilled marker on the date axis — not a value, not a zero. Every panel consuming shin declares its coverage as `n answered / n days in range`. |
 
 **Explicitly not computed:** ACWR / load ratio (mathematical coupling between
 numerator and denominator produces correlations that aren't there; also needs
 months of history we don't have). Any readiness or recovery composite.
 Wrist-based running power is stored but not used in any derived metric — it is
 a model output, not a measurement.
+Also not computed: **any average, mean, or rolling mean of `shin`.** A 0–3
+ordinal with gaps has no meaningful mean, and averaging is precisely what would
+hide the single `2` that matters.
 
 ---
 
@@ -260,6 +300,43 @@ prior Bevel logs produced *device in bed improves sleep* and *10,000 steps harms
 recovery*, both artifacts of self-selection. Causal questions require n-of-1
 alternating-block trials, which are a training decision, not a dashboard feature.
 
+### 8.5 Log — the write surface  *(settled 8 Aug 2026)*
+
+Not a dashboard page. Separate build entry (§4), authenticated, phone-first,
+single column, no desktop layout. Sign-in is email + password only — no signup
+UI, no magic link, no reset UI, because public signups are disabled.
+Sign-in failures are shown inline with the real error text, never a generic
+"something went wrong" — the same transparency rule already binding on save
+failures below.
+
+**Grouped, one screen, journal always visible.** The nine booleans are *not*
+homogeneous — they mix polarity (creatine good, alcohol bad) and domain, and a
+flat list of nine identical rows invites the scan-and-flip-everything error,
+which silently poisons the only free variables the Lab page (§8.4) will ever
+have. Group headers cost zero interactions and force a domain switch between
+batches. The journal stays on screen because an optional field behind a second
+tap gets filled for two weeks and then never again.
+
+| Order | Block | Fields | Notes |
+|---|---|---|---|
+| 1 | Date header | `date` | Defaults to today, **except before 04:00 local, when it defaults to yesterday.** Future dates are rejected silently — native `max` on the date input plus a guard in code — not with an error message; there is nothing to explain to the athlete about a date the picker never should have offered. |
+| 2 | **Status** | `shin` 0–3, `illness` | Four buttons, one row, ≥64 px, no default selection. Selected state readable without colour. Both fields gate interpretation of everything else — neither is a habit. |
+| 3 | **Fuelling** | `creatine`, `protein_breakfast`, `alcohol`, `late_meal` | `alcohol` labelled "any amount". |
+| 4 | **Sleep setup** | `device_in_bed`, `cold_room` | |
+| 5 | **Recovery work** | `breathing_exercises`, `stretching` | `stretching` is a recovery habit, **not** a shin measure. |
+| 6 | **Study** | `study_hours` | Stepper, ±0.5, no numeric keyboard. Untouched = `NULL`. The field can be cleared back to untouched at any time — a `Clear` control, same null-vs-zero stakes as `shin` (§5): `0` is a real value once touched, never a placeholder for unanswered, and one accidental tap must not be able to turn an unlogged day into a permanent `0`. |
+| 7 | **Journal** | `journal` | Prompt is the label. One line high, grows on focus. Optional. |
+| 8 | Sticky footer | Save | **Disabled until `shin` is answered.** The only required field. |
+
+- **Writes are `upsert` on `date`, never `insert`** — same rule as ingest (§6),
+  same reason (§6, duplicate rows). One row per day, always.
+- On load, an existing row for that date prefills the form and Save reads
+  "Update". Editing yesterday is a first-class action, not an edge case.
+- Draft state is kept in `localStorage` keyed by date, restored only when no
+  server row exists, cleared on successful save. A save failure never clears
+  the form and never silently retries.
+- `updated_at` is owned by the BEFORE UPDATE trigger; the client never sends it.
+
 ---
 
 ## 9. Interaction
@@ -308,6 +385,12 @@ functionally important element on every chart.
 - **Discrete sessions** (each medio, each easy run) → **solid marker = in band,
   hollow marker = out of band.**
 
+**A third marker state exists, for `shin` only: absent.** Solid = in band,
+hollow = out of band, **absent = not answered** — hairline outline, no fill,
+sitting on the axis. The primary periostitis panel (§8.3) must be readable as
+three distinct states without colour. A day with no answer must never look like
+a day with no pain.
+
 **Red/green is not used for in/out.** Red is a judgement about the athlete;
 "outside the band" is information about a session. Fill-vs-hollow carries the
 same information, survives colour-blindness, and doesn't editorialise.
@@ -320,9 +403,15 @@ same information, survives colour-blindness, and doesn't editorialise.
 2. No maps. No route panels. Ever.
 3. No surname, no club name, no photograph.
 4. Public site is read-only. All writes go through authenticated `/log`.
-5. Secrets exist only in GitHub Actions secrets. Never in the repo, never in the bundle.
-6. Raw activity JSON and database dumps are never committed to the public
-   repository. They live in a private Supabase Storage bucket (§4).
+5. Secrets exist only in GitHub Actions secrets. Never in the repo, never in the
+   bundle. The one exception is the Supabase **publishable** key, which is public
+   by design and ships only in the `/log/` entry; RLS plus table-level grants to
+   `authenticated` only are the actual boundary.
+6. **`archive/` and `backups/` are permanently gitignored and live in private
+   Supabase Storage buckets.** The repo is public. `archive/` holds unstripped
+   Garmin JSON (polylines, start locations); `backups/` holds `pg_dump` output
+   including `journal`. Neither passes the §4 coordinate gate, so neither may
+   ever be committed.
 
 ---
 
@@ -330,7 +419,7 @@ same information, survives colour-blindness, and doesn't editorialise.
 
 | Phase | Trigger | Deliverable |
 |---|---|---|
-| **0** | Now | Supabase project, `daily` table, `/log` route. Logging starts tonight. |
+| **0** | Now | Supabase project ✅, `daily` table + RLS + grants ✅, `/log` route ⏳. Logging starts the night `/log` ships. |
 | **1** | Repo scaffold | Actions pipeline, fixtures, `metrics.py`, Week + Block off `sessions` data |
 | **2** | 17 Aug — Meso 1 boundary | Port `sessions`/`weekly`/`benchmarks` from Airtable |
 | **3** | Watch arrives | Swap fixtures for `garminconnect`, backfill, mark device break, Today goes live |
@@ -352,3 +441,6 @@ must be worn overnight from the day it arrives.
    Current answer: keep — it is ~30 MB/year and re-analysis needs it.
 3. Does the check-in generator output Markdown for pasting, or write directly to
    a `check_ins` table the coach reads? v1: Markdown.
+
+**Resolved in v1.1 and moved out of this list:** null-vs-zero for `shin`
+(§5, §7, §10); `/log` form layout (§8.5); archive/backup location (§4, §11.6).
