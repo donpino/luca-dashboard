@@ -1,4 +1,4 @@
-# Training Dashboard — Build Spec v1.2
+# Training Dashboard — Build Spec v1.3
 
 **Athlete:** Luca · **Campaign:** middle-distance, Foundation block → 2032
 **Status:** Phase 0 in progress — `daily` table applied, `/log` route next · **Date:** 9 Aug 2026
@@ -29,6 +29,22 @@ the unit conversions ingest performs and that `avg_pace_s_per_km` is derived
 Readiness/Status (§1, §5); wrist running power is corrected to say it is
 retained in the raw archive only, not stored in `activities` — §7 previously
 said "stored" with no corresponding column in §5 (§7).
+
+**Amendments in v1.3 (9 Aug 2026)** — forced by two ingest pipelines about
+to write the same `activities` table with different type vocabularies:
+`source` is added to `activities`, not null, no default, CHECK-constrained
+to `'garmin' | 'strava'` (§5); `type` gets a CHECK constraint restricting
+it to `'running' | 'cycling' | 'other'`, with both ingest paths normalising
+to it at write time and an unmapped value treated as a hard ingest error,
+never passed through and never defaulted to `'other'` (§5); the
+Strava/Garmin date boundary (through 7 Aug / from 8 Aug) is recorded as
+binding, enforced in code rather than the schema, because the two sources
+would otherwise double-write 8 Aug under two different activity ids (§6);
+and v1.2's `biometrics.device` mapping note is corrected — the sentence
+claiming the Strava import writes the `'amazfit'` value is deleted, since
+the Strava import writes `activities` only and carries no RHR/HRV/sleep
+data, so `biometrics` has no pre-FR70 source at all and the series begins
+8 Aug 2026 (§5). Migration: `db/migrations/003_activity_source.sql`.
 
 ---
 
@@ -214,7 +230,20 @@ binding on the ingest layer, not an implementation detail to re-derive:
 | `body_battery_min`, `body_battery_max` | `get_stats(date).bodyBatteryLowestValue` / `.bodyBatteryHighestValue` | single clean source, no ambiguity |
 | `steps` | `get_stats(date).totalSteps` | |
 | `stress_avg` | `get_stats(date).averageStressLevel` | |
-| `device` | **not an API field on any of the above.** Hardcoded `'fr70'` in the Garmin ingest path. The `'amazfit'` value is written only by the one-time Strava archive import (§2 decision 9) — a different code path that never touches this ingest module, so there is no live source to read `device` from here. |
+| `device` | **not an API field on any of the above.** Hardcoded `'fr70'` in the Garmin ingest path. No ingest path writes `'amazfit'`; the `biometrics` series therefore begins 8 Aug 2026, with no pre-FR70 rows. |
+
+**Correction (v1.3):** v1.2's mapping table said the `'amazfit'`
+device value "is written only by the one-time Strava archive import" —
+that was wrong, and the sentence has been removed from the table above.
+The Strava import writes `activities` only; Strava's export carries no
+RHR, HRV, or sleep data, so there is nothing for it to write into
+`biometrics`. `biometrics` therefore has no pre-FR70 source at all, and
+the series begins 8 Aug 2026. The `'amazfit'` value in `device`'s
+`device_type` enum remains defined but currently has no writer. Importing the historical
+Amazfit RHR/HRV/sleep from the athlete's own spreadsheet is a deferred,
+separate manual path — not currently planned, and of limited value
+regardless, since rule 5 / decision 11 forbid any baseline from spanning
+the device break.
 
 **Explicitly excluded from `biometrics`** — Garmin's own sleep score
 (`sleepScores`, `sleepScoreInsight`, `sleepScoreFeedback`, `sleepNeed`) is a
@@ -223,10 +252,34 @@ Not stored. The raw archive (§4, §6) retains it, so this can be revisited
 without re-pulling history.
 
 ### `activities` — one row per run
-`id` PK · `date` · `type` · `distance_km` · `duration_s` · `avg_pace_s_per_km` ·
-`avg_hr` · `max_hr` · `avg_cadence` · `avg_vertical_oscillation` ·
-`avg_vertical_ratio` · `avg_ground_contact_ms` · `elevation_gain_m` ·
-`session_id` FK → `sessions` · `raw_archive_path`
+`id` PK · `date` · `type` · `source` · `distance_km` · `duration_s` ·
+`avg_pace_s_per_km` · `avg_hr` · `max_hr` · `avg_cadence` ·
+`avg_vertical_oscillation` · `avg_vertical_ratio` · `avg_ground_contact_ms` ·
+`elevation_gain_m` · `session_id` FK → `sessions` · `raw_archive_path`
+
+**`source`** — `'garmin'` | `'strava'`, not null, no default, enforced
+by a CHECK constraint (`db/migrations/003_activity_source.sql`). No
+default is deliberate: an ingest path that forgets to set it fails the
+insert rather than writing a silently mislabelled row. See the source
+boundary in §6.
+
+**`type` vocabulary — binding, enforced by CHECK.** `type` is
+restricted to `'running'` | `'cycling'` | `'other'`. Both ingest paths
+normalise to this vocabulary at write time: Garmin's
+`activityTypeDTO.typeKey` and Strava's export type string are each
+mapped onto it. An unmapped value is a hard error at ingest — never
+passed through unchanged, never defaulted to `'other'`. This is what
+makes rule 6 (cycling excluded from `weekly_km`) actually enforceable:
+the metric's type filter only works if `type` can't silently contain a
+string the filter doesn't match.
+
+**Strava-sourced rows carry structural NULLs, not missing
+measurements.** Strava's export has no running-dynamics data:
+`avg_cadence`, `avg_vertical_oscillation`, `avg_vertical_ratio`, and
+`avg_ground_contact_ms` are NULL on every `source = 'strava'` row, and
+`avg_hr` / `max_hr` may also be NULL. NULL here means the source never
+carried the field, not that it went unmeasured. Any metric consuming
+these columns must handle NULL rather than assume presence.
 
 **No coordinates. No polyline. No start location.** Not stored, not fetched into
 the output layer.
@@ -292,6 +345,16 @@ what duplicate rows did to the Airtable base, this is enforced with a
 specifically the conflict target is `ON CONFLICT (id) DO UPDATE`, not
 `date` — a day can hold more than one activity, so Garmin's own numeric
 `activityId` is the natural key there, not the date.
+
+**Source boundary — binding, enforced as a date filter in code, not in
+the schema.** The Strava archive import writes `activities` rows dated
+on or before 7 Aug 2026 only; the live Garmin path writes rows dated 8
+Aug 2026 onward only. Both ranges are explicit date filters in each
+ingest path. Reason: the run recorded on 8 Aug 2026 exists in both
+sources under two different ids (Strava's and Garmin's own
+`activityId`), so `ON CONFLICT (id) DO UPDATE` cannot deduplicate it —
+the ids never collide. Only the date boundary prevents that day being
+written twice under two rows.
 
 ---
 
