@@ -1,0 +1,157 @@
+name: Garmin sync
+
+# Ingest only (DASHBOARD_SPEC.md §12) — no frontend exists yet, so this
+# workflow never builds or deploys anything. sync.py never writes "today"
+# and pulls a trailing 3-day window by default, so exact timing is not
+# critical, but 05:00 UTC is chosen to run comfortably after the previous
+# night's sleep data has synced to Garmin Connect:
+#   - 05:00 UTC = 06:00 CET (winter, UTC+1) — matches spec §4's original
+#     "cron 06:00 CET" exactly.
+#   - 05:00 UTC = 07:00 CEST (summer, UTC+2) — one hour later than the
+#     spec's literal wording, accepted because GitHub Actions cron is
+#     UTC-only with no DST awareness, and a single fixed UTC time is the
+#     only option. The trailing-window design absorbs the seasonal drift.
+on:
+  schedule:
+    - cron: "0 5 * * *"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  # A manual workflow_dispatch run and the scheduled run must not race on
+  # the Garmin token cache save (see below) — queue rather than overlap.
+  group: garmin-sync
+  cancel-in-progress: false
+
+env:
+  # Path garmin_client.py's TOKENSTORE resolves to on an ubuntu-latest
+  # runner (Path.home() == $HOME == /home/runner). Kept in one place so
+  # the cache steps and garmin_client.py can't drift apart silently.
+  GARMIN_TOKENSTORE_PATH: ~/.garminconnect_luca_dashboard
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+          cache: "pip"
+          cache-dependency-path: ingest/requirements.txt
+
+      - name: Install dependencies
+        run: pip install -r ingest/requirements.txt
+
+      - name: Verify required secrets are configured
+        env:
+          GARMIN_EMAIL: ${{ secrets.GARMIN_EMAIL }}
+          GARMIN_PASSWORD: ${{ secrets.GARMIN_PASSWORD }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: |
+          missing=()
+          [ -z "$GARMIN_EMAIL" ] && missing+=("GARMIN_EMAIL")
+          [ -z "$GARMIN_PASSWORD" ] && missing+=("GARMIN_PASSWORD")
+          [ -z "$SUPABASE_URL" ] && missing+=("SUPABASE_URL")
+          [ -z "$SUPABASE_SERVICE_ROLE_KEY" ] && missing+=("SUPABASE_SERVICE_ROLE_KEY")
+          if [ ${#missing[@]} -gt 0 ]; then
+            echo "::error::Missing required repository secret(s): ${missing[*]}. Add them at Settings > Secrets and variables > Actions > New repository secret, then re-run."
+            exit 1
+          fi
+          echo "All required secrets are present."
+
+      # Garmin auth token persistence (DASHBOARD_SPEC.md §6, v1.8).
+      #
+      # A fresh username/password login on every scheduled run is a
+      # rate-limit and account-flagging risk, and if the account has MFA
+      # enabled, a fresh login cannot complete at all in CI — there is no
+      # terminal to receive the code (see garmin_client.py's _prompt_mfa).
+      # So the cached garth token directory (~/.garminconnect_luca_dashboard,
+      # same path garmin_client.py already uses locally) is persisted across
+      # runs via actions/cache instead, and login only ever *resumes* a
+      # cached session; it does not perform a fresh password login in the
+      # normal case.
+      #
+      # actions/cache keys are immutable once written — a second job can't
+      # overwrite a previous run's key — so this uses a unique key per run
+      # (garmin-token-<run_id>-<attempt>) for saving, and a plain prefix
+      # (garmin-token-) as a restore-keys fallback to pick up the most
+      # recently saved token on the *next* run.
+      - name: Restore Garmin token cache
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ env.GARMIN_TOKENSTORE_PATH }}
+          key: garmin-token-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: |
+            garmin-token-
+
+      - name: Check whether a token was restored
+        id: token_check_pre
+        run: |
+          dir="${GARMIN_TOKENSTORE_PATH/#\~/$HOME}"
+          if [ -d "$dir" ] && [ "$(ls -A "$dir" 2>/dev/null)" ]; then
+            echo "restored=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "restored=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      # Cache-miss path (first run ever, or a cache old enough to have been
+      # evicted by GitHub's 7-day unused-cache eviction). GARMIN_TOKEN_SEED
+      # is a one-time bootstrap secret: a base64-encoded tar of a token
+      # directory produced by an *interactive* local login (see the sync.yml
+      # setup instructions), so that if the account requires MFA, that
+      # step happens on Luca's own terminal, never inside this workflow.
+      # If the secret isn't set, this step does not attempt a fresh
+      # password login itself — it lets sync.py's own get_client() do that,
+      # which will fail fast (not hang) if MFA is then required, since
+      # GitHub Actions has no interactive stdin for _prompt_mfa to read.
+      - name: Seed Garmin token store from bootstrap secret (cache miss only)
+        if: steps.token_check_pre.outputs.restored != 'true'
+        env:
+          GARMIN_TOKEN_SEED: ${{ secrets.GARMIN_TOKEN_SEED }}
+        run: |
+          dir="${GARMIN_TOKENSTORE_PATH/#\~/$HOME}"
+          if [ -z "$GARMIN_TOKEN_SEED" ]; then
+            echo "::warning::No cached Garmin token found and GARMIN_TOKEN_SEED is not set. Falling back to sync.py's normal fresh-login path, which will fail immediately (not hang) if the account requires an MFA code. See DASHBOARD_SPEC.md §6 for the token bootstrap procedure."
+            exit 0
+          fi
+          mkdir -p "$dir"
+          echo "$GARMIN_TOKEN_SEED" | base64 -d | tar -x -C "$dir"
+          echo "Seeded Garmin token store from GARMIN_TOKEN_SEED."
+
+      - name: Run ingest
+        working-directory: ingest
+        env:
+          GARMIN_EMAIL: ${{ secrets.GARMIN_EMAIL }}
+          GARMIN_PASSWORD: ${{ secrets.GARMIN_PASSWORD }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: python sync.py
+
+      - name: Check whether a token exists to cache
+        id: token_check_post
+        if: always()
+        run: |
+          dir="${GARMIN_TOKENSTORE_PATH/#\~/$HOME}"
+          if [ -d "$dir" ] && [ "$(ls -A "$dir" 2>/dev/null)" ]; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      # Runs even if the ingest step above failed (e.g. a Supabase write
+      # error), so a token refreshed during login is never lost — but only
+      # if get_client() actually produced a token store; see the step above.
+      - name: Save Garmin token cache
+        if: always() && steps.token_check_post.outputs.present == 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ env.GARMIN_TOKENSTORE_PATH }}
+          key: garmin-token-${{ github.run_id }}-${{ github.run_attempt }}

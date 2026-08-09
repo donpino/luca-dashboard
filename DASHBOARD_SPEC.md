@@ -1,11 +1,12 @@
-# Training Dashboard — Build Spec v1.7
+# Training Dashboard — Build Spec v1.8
 
 **Athlete:** Luca · **Campaign:** middle-distance, Foundation block → 2032
 **Status:** Phase 0 complete — `daily` table, RLS/grants, and `/log` all
 shipped, in nightly use since 8 Aug. Phase 1 in progress —
 `garmin_client.py`, `biometrics`/`activities` migrations, `sync.py`
-backfill, the Strava archive import, and `compute/metrics.py` done for
-every metric computable against the current schema; four metrics
+backfill, the Strava archive import, `compute/metrics.py` done for every
+metric computable against the current schema, and `.github/workflows/sync.yml`
+(the scheduled ingest job) all shipped; four metrics
 (`easy_band_compliance`, `medio_control`, `aerobic_efficiency`,
 `decoupling`) are implemented as pure functions but have no real data to
 run on yet — see the new `laps` phase in §12. Pre-FR70 volume is now
@@ -245,6 +246,115 @@ regardless of the conversion question: `impact_mechanics` (§7) joins
 `avg_cadence` to `daily.shin`, and `daily` has no rows before 8 Aug
 2026 (§8.5's `/log` route did not exist yet), so no pre-FR70 cadence
 value has a shin row to join against today.
+
+**Amendments in v1.8 (9 Aug 2026)** — forced by writing
+`.github/workflows/sync.yml`, the scheduled ingest workflow (CLAUDE.md
+build order; this section replaces §6's previously unimplementable
+sentence "token stored in GitHub Actions secrets, refreshed by the job" —
+a workflow cannot write back to its own secrets, so that could never have
+worked as written).
+
+**Schedule.** `cron: "0 5 * * *"` — 05:00 UTC daily, plus
+`workflow_dispatch` for manual triggering. 05:00 UTC = 06:00 CET (winter,
+UTC+1), matching §4's original "cron 06:00 CET" exactly; = 07:00 CEST
+(summer, UTC+2), one hour later than the spec's literal wording. GitHub
+Actions cron is UTC-only with no DST awareness, so a single fixed UTC
+time necessarily drifts by an hour across the year — accepted because
+`sync.py` never writes today and pulls a trailing 3-day window by
+default (§6, v1.4), so a day missed by an hour of freshness is picked up
+on the next run regardless. The workflow is **ingest-only**: it runs
+`ingest/sync.py` and nothing else. It does not build or deploy the
+frontend — no frontend exists yet (§12).
+
+**Garmin token persistence — replaces §6's "refreshed by the job."** The
+cached `garth` token directory (`~/.garminconnect_luca_dashboard`, the
+same `TOKENSTORE` path `garmin_client.py` already uses locally, unchanged
+by this amendment) is persisted across scheduled runs with `actions/cache`,
+keyed `garmin-token-<run_id>-<attempt>` on save and restored via the
+`garmin-token-` prefix as `restore-keys`. Login therefore normally
+*resumes* a cached session rather than performing a fresh password login —
+this is what makes a daily unattended run safe against Garmin's own
+rate-limiting and new-device flagging, and is also why MFA does not block
+scheduled runs in the normal case: `garth`'s cached-session resume does
+not re-trigger Garmin's MFA challenge, only a *fresh* username/password
+login does.
+
+**Cache miss, explicitly.** On the first run ever, or after GitHub's
+7-day unused-cache eviction, the restored directory is empty. The
+workflow then seeds it from `GARMIN_TOKEN_SEED`, a one-time bootstrap
+secret: a base64-encoded tar of a token directory produced by an
+*interactive* local login (`python sync.py`, run on Luca's own machine),
+so that if the Garmin account requires MFA, that challenge is answered on
+a real terminal — never inside the workflow, which has no interactive
+stdin to answer it with. **Whether this account has MFA enabled is not
+yet confirmed** (open question, see §13) — the design above is
+deliberately indifferent to the answer, since it never performs a fresh
+login inside CI on the normal path either way. If `GARMIN_TOKEN_SEED` is
+unset when a cache miss occurs, the workflow does not attempt a
+password login itself; it lets `sync.py`'s own `get_client()` do that,
+which now fails fast with an actionable message (`garmin_client.py`'s
+`_prompt_mfa`, amended in this commit) instead of hanging or printing a
+bare `EOFError` traceback, if MFA is then required.
+
+**Recovery procedure, for when the cache is ever fully lost or a token
+expires beyond `garth`'s refresh window:** run `python sync.py` locally
+to log in interactively (answering MFA if prompted), then re-encode the
+refreshed `~/.garminconnect_luca_dashboard` directory
+(`tar -C ~/.garminconnect_luca_dashboard -cf - . | base64`) and replace
+the `GARMIN_TOKEN_SEED` secret's value with the output, via Settings →
+Secrets and variables → Actions.
+
+**Never written anywhere readable in a public artifact.** The token
+directory exists only inside GitHub's private Actions cache storage and
+the encrypted `GARMIN_TOKEN_SEED` secret — never in a workflow log, never
+committed, never in `web/` or any client bundle (CLAUDE.md rule 8). Cache
+contents are not readable outside Actions runs by anyone without write
+access to the repository.
+
+**Public-log constraint — binding on the ingest path, not a one-time
+audit.** The repo, and therefore its Actions logs, are public (CLAUDE.md
+rule 8). Nothing `sync.py` or anything it calls prints may ever include a
+Garmin email or password, a Garmin or Supabase token/key, a Supabase URL,
+or coordinates. Activity distances, paces, HR, and row counts are fine —
+those are published by design. `sync.py`'s existing `print()` calls were
+audited against this rule while writing this amendment and already
+comply — dates, boolean presence flags, `hrv_status`, activity ids,
+types, and counts only, never a credential or secret value. This
+constraint binds every future change to the ingest path's logging, not
+just what exists today.
+
+**Failure visibility.** GitHub Actions does **not** email failure
+notifications by default — the relevant setting
+(Settings → Notifications → System → Actions) defaults to "Don't
+notify" and must be explicitly changed to "Email" or "Only notify for
+failed workflows" for scheduled-run failures to reach an inbox at all.
+Separately, and independent of that setting: GitHub sends scheduled-workflow
+failure notifications to whichever user last modified the cron syntax in
+the workflow file, not to every watcher of the repo. The workflow itself
+exits non-zero on any ingest failure (`sync.py` raises rather than
+catching and swallowing; `argparse`/`RuntimeError` failures propagate;
+the "verify required secrets" step exits 1 on any missing secret) — no
+path reports success on a failed sync.
+
+**60-day inactivity auto-disable.** Confirmed applicable: GitHub
+automatically disables scheduled workflows in a **public** repository
+after 60 days with no repository activity. If it fires, the athlete would
+observe the dashboard silently going stale — no error, no email (a
+disabled schedule doesn't run at all, so there's nothing to fail loudly),
+just data that stops updating one morning. Re-enabling requires a manual
+click in the repo's Actions tab. Low risk given the athlete's own commit
+cadence (spec amendments alone have landed same-day, repeatedly, through
+Phase 0/1), but a real risk during an injury break or off-season gap long
+enough to cross 60 days of repo silence.
+
+**Python / dependencies.** Pinned to Python 3.14 (matching the local dev
+`.venv`, confirmed `3.14.5`), installed from `ingest/requirements.txt` via
+plain `pip install`, with `actions/setup-python`'s built-in `pip` cache
+keyed on that file so the job isn't reinstalling from PyPI on every run.
+
+Migration: none — this amendment adds no schema and no new table.
+
+---
 
 **Amendments in v1.7 (9 Aug 2026)** — forced by new information from the
 athlete, and cross-checked against `Luca Training Tracker`, the
@@ -671,7 +781,12 @@ above ingest can be built and tested against a stable, real-shaped snapshot
 without hitting the live API on every run — the fixtures now record actual
 observed responses rather than a hand-authored guess at their shape.
 
-Garmin auth: token stored in GitHub Actions secrets, refreshed by the job.
+**Garmin auth (superseded by v1.8 amendment above):** the cached `garth`
+token directory is persisted across scheduled runs via `actions/cache`,
+not "stored in GitHub Actions secrets, refreshed by the job" as this
+sentence previously and incorrectly said — a workflow cannot write back
+to its own secrets. See the v1.8 amendment for the actual mechanism, the
+`GARMIN_TOKEN_SEED` bootstrap secret, and the cache-miss/MFA handling.
 Sync is idempotent — re-running a day overwrites rather than duplicates. Given
 what duplicate rows did to the Airtable base, this is enforced with a
 `ON CONFLICT (date) DO UPDATE` upsert, never an insert. For `activities`
@@ -999,6 +1114,16 @@ responses* used as test fixtures, not hand-written stand-ins.
    until now as one formula, one source table, per metric? Not answered
    here — flagged for the 17 Aug port, when `sessions`/`weekly` actually
    exist to read from.
+
+5. *(added v1.8)* Does the Garmin account behind `GARMIN_EMAIL` have MFA
+   enabled? Not yet confirmed either way. It doesn't block `sync.yml`
+   shipping — the token-cache design resumes a session rather than
+   performing a fresh login in CI regardless of the answer — but it
+   determines what happens the day the cache is ever fully lost: with MFA
+   on, the recovery procedure in the v1.8 amendment (local interactive
+   login, re-seed `GARMIN_TOKEN_SEED`) is mandatory, not optional, since a
+   fresh login inside the workflow will fail immediately. Confirm next
+   time a fresh local login happens, and record the answer here.
 
 **Resolved in v1.1 and moved out of this list:** null-vs-zero for `shin`
 (§5, §7, §10); `/log` form layout (§8.5); archive/backup location (§4, §11.6).
