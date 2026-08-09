@@ -1,17 +1,17 @@
-# Training Dashboard — Build Spec v1.9
+# Training Dashboard — Build Spec v1.10
 
 **Athlete:** Luca · **Campaign:** middle-distance, Foundation block → 2032
-**Status:** Phase 0 complete — `daily` table, RLS/grants, and `/log` all
-shipped, in nightly use since 8 Aug. Phase 1 in progress —
+**Status:** Phase 1 complete — `daily` table, RLS/grants, `/log`,
 `garmin_client.py`, `biometrics`/`activities` migrations, `sync.py`
 backfill, the Strava archive import, `compute/metrics.py` done for every
 metric computable against the current schema, and `.github/workflows/sync.yml`
 (the scheduled ingest job) all shipped; four metrics
 (`easy_band_compliance`, `medio_control`, `aerobic_efficiency`,
 `decoupling`) are implemented as pure functions but have no real data to
-run on yet — see the new `laps` phase in §12. Pre-FR70 volume is now
+run on yet — see the `laps` phase in §12. Pre-FR70 volume is now
 known to be a floor, not a measurement — see the v1.7 amendment below
-and §5, §7, §8.3. · **Date:** 9 Aug 2026
+and §5, §7, §8.3. Frontend deploy in progress — Cloudflare Pages behind
+Cloudflare Access, see the v1.10 amendment below. · **Date:** 9 Aug 2026
 
 This document is the contract. It goes in the repo root alongside `CLAUDE.md`.
 Anything not defined here is an open question, not an implementation detail to
@@ -510,9 +510,12 @@ Pages, if any, is not decided here and isn't needed to record this
 amendment.
 
 **2. Single build entry — supersedes §4's "two build entries, no client
-router."** The render layer becomes one app, one bundle, a client-side
-router, with `/log` reachable from the dashboard's own navigation, not a
-second static build entry at `web/log/index.html`.
+router."** *(Deferred to Phase 2 by the v1.10 amendment below — the two
+static entries are retained for the first deploy; the reasoning here is
+what makes that eventual merge safe, not a statement that it has
+happened yet.)* The render layer becomes one app, one bundle, a
+client-side router, with `/log` reachable from the dashboard's own
+navigation, not a second static build entry at `web/log/index.html`.
 
 The original split existed for one stated reason: to keep auth code, the
 Supabase client, and any write path out of a bundle that was publicly
@@ -609,6 +612,46 @@ This removes the tense ambiguity directly — "tonight," not "today" — and
 matches what the field actually captures: free text describing the
 current day's behaviour, framed as a forward-looking recovery note,
 joined at date + 1 exactly like the habit booleans beside it.
+
+---
+
+**Amendments in v1.10 (9 Aug 2026)** — the first Cloudflare Pages deploy
+of the frontend, prepared in this commit. Two items; neither reverses a
+v1.9 decision, both settle loose ends v1.9 left open.
+
+**1. Two build entries retained — v1.9 decision 2 deferred, not
+reversed.** v1.9 item 2 called for collapsing `index.html` and
+`log/index.html` into a single bundle with a client router, and gave the
+correct reason to eventually do so: with Cloudflare Access gating the
+whole site, there is no anonymous visitor left to keep the write path
+away from. That reasoning removed the *need* to keep the two entries
+apart. It did not create a need to merge them, and merging them today
+buys nothing — Week and Block don't exist yet, so there is no second
+page for a router to route to, and `/log` is reachable today only by
+typing its URL, exactly as the two-entry build already serves it. Two
+static entries deploy correctly on Cloudflare Pages: `log/index.html`
+serves at `/log/`, and Access protects the whole hostname regardless of
+how many bundles sit behind it. The consolidation is deferred to
+**Phase 2**, when Week and Block exist and a router has pages worth
+routing between — see §12. §4's architecture diagram and prose, and
+v1.9 item 2's own text, are updated below and above so a reader of
+either does not conclude the merge already happened.
+
+**2. `VITE_BASE_PATH` stays unset — closes the loose end v1.9 left
+open.** v1.9 item 1 identified that this variable's original purpose
+(carrying a GitHub Pages project-site subpath) no longer applied under
+Cloudflare Pages, but left "what value, if any, it should carry" open
+for the implementation phase. Answered now: none. Cloudflare Pages
+serves from the site root — custom domain or `*.pages.dev` — so `base`
+resolves to `/` whether the variable is set or not, and it is left
+unset. §4 is updated below to close this loose end.
+
+**Also shipped in this commit:** `web/.nvmrc` pins Node to `22`. The
+repo declared no Node version anywhere; Cloudflare Pages reads `.nvmrc`
+from the build root (`web/`), and without one it would default to
+whatever LTS Cloudflare's build image currently ships, an unpinned and
+silently-changeable choice. Local dev runs Node 25.9.0, an
+odd-numbered non-LTS release that should not leak into the build image.
 
 ---
 
@@ -710,9 +753,10 @@ threshold and displays `insufficient data — 14/60 days` instead. See §8.4.
 │                writes public/data/*.json                │
 └──────────────────────────┬──────────────────────────────┘
 ┌─ RENDER ───────────────── ▼ ────────────────────────────┐
-│  Vite + React + ECharts, single bundle, client router    │
+│  Vite + React + ECharts, two static entries (v1.10,      │
+│  merge to single bundle + router deferred to Phase 2)    │
 │  → Cloudflare Pages, gated by Cloudflare Access (v1.9)   │
-│  /log route (in-app) → Supabase Auth + RLS (write)       │
+│  /log = second entry → Supabase Auth + RLS (write)       │
 └─────────────────────────────────────────────────────────┘
 ```
 
@@ -724,24 +768,31 @@ screen was computed in `metrics.py` and is therefore testable and versioned.
 Latitude and longitude are dropped before any file is written to `public/`. A
 unit test asserts no output JSON contains a key matching `/lat|lon|coord|polyline/`.
 
-**Single build entry (v1.9) — supersedes the two-entry split this section
-originally specified.** The render layer was originally a static
-multi-page build — `web/index.html` (public dashboard) and
-`web/log/index.html` (the write surface) — for one stated reason: **the
-public dashboard bundle contained no auth code, no Supabase client, and no
-write path**, kept out of a bundle any anonymous visitor could load. That
-reasoning depended on the dashboard bundle being publicly reachable; it no
-longer is, now that Cloudflare Access (§2 decision 3, v1.9) gates the
-entire site at the edge — the only person who can reach any bundle,
-dashboard or `/log`, is the authenticated athlete. The render layer is now
-one app, one bundle, a client-side router, with `/log` reachable from the
-dashboard's own navigation rather than a separate build entry. Accepted
-explicitly: the Supabase publishable key now ships in the single combined
-bundle rather than only in a `/log`-only entry — see the v1.9 amendment
-above for why this is safe (RLS and the `authenticated`-role grants were
-always the actual write boundary, never the bundle split). All fonts are
-self-hosted; the site makes no third-party requests beyond the Cloudflare
-Access authentication flow itself.
+**Two build entries, retained until Phase 2 (v1.10) — v1.9's planned
+single-bundle merge deferred, not reversed.** The render layer is a
+static multi-page build — `web/index.html` (public dashboard) and
+`web/log/index.html` (the write surface) — originally for one stated
+reason: **the public dashboard bundle contained no auth code, no
+Supabase client, and no write path**, kept out of a bundle any anonymous
+visitor could load. That reasoning depended on the dashboard bundle
+being publicly reachable; it no longer is, now that Cloudflare Access
+(§2 decision 3, v1.9) gates the entire site at the edge — the only
+person who can reach any bundle, dashboard or `/log`, is the
+authenticated athlete. v1.9 took that as license to merge the two
+entries into one app, one bundle, with a client-side router. v1.10
+keeps them separate for the first deploy: removing the *need* to split
+the bundles didn't create a *need* to merge them, and there is no
+second page yet for a router to route to (Week and Block don't exist).
+Two static entries deploy correctly on Cloudflare Pages — `log/index.html`
+serves at `/log/` — so the merge is deferred to **Phase 2**, when Week
+and Block exist and a router has somewhere to route. Accepted
+explicitly, per v1.9, and unchanged by this deferral: the Supabase
+publishable key ships in the `/log` entry, not the dashboard entry, for
+now — see the v1.9 amendment above for why shipping it in either is
+safe (RLS and the `authenticated`-role grants were always the actual
+write boundary, never the bundle split). All fonts are self-hosted; the
+site makes no third-party requests beyond the Cloudflare Access
+authentication flow itself.
 
 **Raw archives and backups never touch the repo.** They live in private
 Supabase Storage buckets. `archive/` holds unstripped Garmin JSON — GPS
@@ -755,9 +806,10 @@ coordinate-stripping gate, so neither may reach a public repo. See §11.6.
 Cloudflare Pages serves from the site root (custom domain or `*.pages.dev`),
 not a repo-name subpath, so this variable's original purpose no longer
 applies. Its mechanism — defaulting to `/` locally, so a developer never
-needs to set it to run the dev server — is unaffected. What value, if any,
-it should carry under Cloudflare Pages is left open for the implementation
-phase, not decided here.
+needs to set it to run the dev server — is unaffected. **Closed by v1.10:**
+the variable stays unset; `base` resolves to `/` under Cloudflare Pages
+exactly as it does locally, so there is nothing deploy-specific left for
+it to carry.
 
 ---
 
@@ -1166,8 +1218,10 @@ alternating-block trials, which are a training decision, not a dashboard feature
 
 ### 8.5 Log — the write surface  *(settled 8 Aug 2026)*
 
-A route within the single app bundle (§4, v1.9 — previously a separate build
-entry), reachable from the dashboard's own navigation, authenticated,
+A separate build entry, `web/log/index.html`, serving at `/log/` (§4 —
+v1.9 planned a route reachable from the dashboard's own in-app navigation
+instead, but v1.10 defers that bundle merge to Phase 2; until then there
+is no router, and `/log/` is reached by URL, not by a nav link), authenticated,
 phone-first, single column, no desktop layout. Reaching the app at all
 requires an authenticated Cloudflare Access session (§2 decision 3, v1.9);
 independently of that, this route's own Supabase sign-in is email + password
@@ -1274,11 +1328,14 @@ same information, survives colour-blindness, and doesn't editorialise.
    which requires its own Supabase sign-in regardless of what gates the
    site itself (v1.9 rule 3, below).
 5. Secrets exist only in GitHub Actions secrets. Never in the repo, never in the
-   bundle. The one exception is the Supabase **publishable** key, which is public
-   by design and ships in the single site bundle (v1.9 — previously only in a
-   separate `/log/` entry, when the render layer had two build entries; see
-   §4); RLS plus table-level grants to `authenticated` only are the actual
-   boundary, not which bundle the key ships in.
+   dashboard bundle. The one exception is the Supabase **publishable** key,
+   which is public by design and ships in the `/log/` entry only, for now —
+   v1.9 planned for it to ship in a single combined bundle once the two
+   build entries merged, but v1.10 defers that merge to Phase 2, so the
+   render layer still has two build entries and the key stays out of the
+   public dashboard entry (see §4). RLS plus table-level grants to
+   `authenticated` only are the actual boundary, not which bundle the key
+   ships in.
 6. **`archive/` and `backups/` are permanently gitignored and live in private
    Supabase Storage buckets.** The repo is public. `archive/` holds unstripped
    Garmin JSON (polylines, start locations); `backups/` holds `pg_dump` output

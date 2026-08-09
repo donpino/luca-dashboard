@@ -2,11 +2,12 @@ import { defineConfig, loadEnv } from 'vite'
 import react from '@vitejs/plugin-react'
 import { resolve } from 'node:path'
 
-// Two static entries, no client router (DASHBOARD_SPEC.md §4):
+// Two static entries, retained until Phase 2 (DASHBOARD_SPEC.md §4, v1.10):
 //   index.html      -> public dashboard (stub for now)
 //   log/index.html  -> authenticated write surface
-// `base` comes from an env var, not a hardcoded string, so the same build
-// works locally (default "/") and under the repo's GitHub Pages subpath.
+// Host is Cloudflare Pages behind Cloudflare Access (v1.9). `base` comes
+// from an env var, not a hardcoded string, but VITE_BASE_PATH stays unset:
+// Cloudflare Pages serves from the site root, so base resolves to "/".
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '')
 
