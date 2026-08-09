@@ -1,4 +1,4 @@
-# Training Dashboard — Build Spec v1.10
+# Training Dashboard — Build Spec v1.11
 
 **Athlete:** Luca · **Campaign:** middle-distance, Foundation block → 2032
 **Status:** Phase 1 complete — `daily` table, RLS/grants, `/log`,
@@ -10,8 +10,9 @@ metric computable against the current schema, and `.github/workflows/sync.yml`
 `decoupling`) are implemented as pure functions but have no real data to
 run on yet — see the `laps` phase in §12. Pre-FR70 volume is now
 known to be a floor, not a measurement — see the v1.7 amendment below
-and §5, §7, §8.3. Frontend deploy in progress — Cloudflare Pages behind
-Cloudflare Access, see the v1.10 amendment below. · **Date:** 9 Aug 2026
+and §5, §7, §8.3. Frontend deploy in progress — Cloudflare Workers with
+static assets, behind Cloudflare Access, see the v1.11 amendment below.
+· **Date:** 9 Aug 2026
 
 This document is the contract. It goes in the repo root alongside `CLAUDE.md`.
 Anything not defined here is an open question, not an implementation detail to
@@ -655,10 +656,81 @@ odd-numbered non-LTS release that should not leak into the build image.
 
 ---
 
+**Amendments in v1.11 (9 Aug 2026)** — the host changes again, before the
+v1.10 Cloudflare Pages deploy ever went live: the first deploy attempt,
+created through Cloudflare's dashboard, was routed into a Workers project
+by Cloudflare's own current default rather than a Pages one, and failed
+with `ENOENT` on `/opt/buildhome/repo/package.json` — a Pages-shaped build
+root (`/`) applied to a project Cloudflare had silently placed on the
+Workers path, whose deploy command (`npx wrangler deploy`) needs a
+Wrangler config the repo never had. Investigating that failure is what
+surfaced the two reasons below; this is not a cosmetic rename of the same
+host.
+
+**1. Host change — supersedes §2 decision 3 and §4's architecture
+diagram/prose, again.** Host becomes **Cloudflare Workers with static
+assets**, not Cloudflare Pages. Two reasons:
+
+- Cloudflare is folding Pages into Workers — new platform features ship
+  to Workers first, Pages increasingly not at all. Deploying to Pages
+  now would mean building a migration this project would have to redo
+  later, for no benefit gained by waiting.
+- Protecting the default `*.workers.dev` subdomain with Cloudflare
+  Access is a single toggle (Worker → Settings → Domains & Routes →
+  `workers.dev` → Enable Cloudflare Access). The Pages equivalent
+  (`*.pages.dev`) requires a documented multi-step workaround to strip a
+  wildcard route from an auto-created Access application — extra
+  surface for the exact gate this project depends on (§2 decision 3,
+  v1.9) to be configured correctly.
+
+Everything else about v1.9's decision 3 is unchanged: the site sits
+behind Cloudflare Access, the repo stays public, and Supabase Auth + RLS
+remain the separate and sole write boundary for `/log` — v1.9's binding
+rule 3, unaffected by which Cloudflare product serves the static files
+(§11 rule 7).
+
+**2. Deploy mechanism — new, forced by the failed first deploy above.**
+Workers static-assets deploys run via `npx wrangler deploy`, which reads
+`web/wrangler.jsonc`:
+
+```json
+{
+  "name": "luca-dashboard",
+  "compatibility_date": "2026-08-09",
+  "assets": {
+    "directory": "./dist"
+  }
+}
+```
+
+This is an assets-only Worker — there is no Worker script, so the config
+carries no `main` property, and `assets` carries no `binding` field
+(Cloudflare's own migration guidance: `binding` is only valid once a
+Worker script exists to bind the assets *to*). The project's Cloudflare
+dashboard root directory must be set to `web`, not `/` — the `ENOENT`
+above was exactly this being wrong, not a Wrangler problem.
+
+**3. Two build entries still serve correctly — verified, no config
+added.** §4's two static entries (v1.10) need no change under Workers:
+`dist/index.html` and `dist/log/index.html` are both present after
+`npm run build`, and Workers' static-assets serving resolves a request
+to `/log/` to `log/index.html` via the same directory-index handling
+that serves `/` from the root `index.html` — this is the platform's
+default `html_handling` behaviour, not something this config opts into.
+No `not_found_handling` setting is added: nothing about this deploy
+needs a SPA-style catch-all fallback, since there is still no
+client-side router (§4, v1.10) for a missing route to fall back to — an
+unmatched path should 404, not silently serve `index.html`.
+
+`VITE_BASE_PATH` stays unset, unchanged by this amendment — see §4's
+closing paragraph, updated below.
+
+---
+
 ## 1. What this is
 
 A private-by-design training dashboard — public source repo, privately-hosted
-site behind Cloudflare Access (§2 decision 3, v1.9; previously
+site behind Cloudflare Access (§2 decision 3, v1.9/v1.11; previously
 publicly-hosted on GitHub Pages) — that answers four questions and refuses
 to answer a fifth:
 
@@ -685,7 +757,7 @@ input to our own metrics.
 |---|---|---|
 | 1 | Store = **Supabase** (Postgres, free tier) | Airtable free caps at 1,000 rows/base; ~790 rows/yr means a ceiling in ~15 months, then ≈€240/yr. Supabase 500 MB is never reached. |
 | 2 | Daily-entry write path = **`/log` route, Supabase Auth + RLS, password** | Public site stays read-only. Only Luca's account can write. |
-| 3 | Host = **Cloudflare Pages, site private behind Cloudflare Access** (superseded v1.9 — was GitHub Pages, public) | GitHub Pages has no access control outside GitHub Enterprise Cloud, and a client-side gate is theatre here — the JSON under `web/public/data/` is a directly-fetchable static file regardless of the HTML/JS. Cloudflare Zero Trust's free tier (≤50 users, $0/mo, verified 9 Aug 2026) includes Access with email one-time-PIN login. Repo stays public; the deployed site does not. See the v1.9 amendment above. |
+| 3 | Host = **Cloudflare Workers with static assets, site private behind Cloudflare Access** (superseded v1.9 — was GitHub Pages, public; superseded v1.11 — was Cloudflare Pages) | GitHub Pages has no access control outside GitHub Enterprise Cloud, and a client-side gate is theatre here — the JSON under `web/public/data/` is a directly-fetchable static file regardless of the HTML/JS. Cloudflare Zero Trust's free tier (≤50 users, $0/mo, verified 9 Aug 2026) includes Access with email one-time-PIN login. Repo stays public; the deployed site does not. Workers, not Pages, because Cloudflare is folding Pages into Workers going forward and protecting the default `*.workers.dev` subdomain with Access is a single toggle there, versus a documented multi-step workaround on Pages. See the v1.9 and v1.11 amendments above. |
 | 4 | **No GPS coordinates ever leave the compute layer** | Public site + home-start runs = published absence schedule. No panel needs location. |
 | 5 | **No surname anywhere on the site** | Health data, permanent, indexed, two years from a job market. |
 | 6 | Charts = **ECharts**, interactive on all breakpoints | Native `dataZoom` for the range selector; tap-to-inspect is first-class. One codebase, no static mobile fork. |
@@ -755,7 +827,8 @@ threshold and displays `insufficient data — 14/60 days` instead. See §8.4.
 ┌─ RENDER ───────────────── ▼ ────────────────────────────┐
 │  Vite + React + ECharts, two static entries (v1.10,      │
 │  merge to single bundle + router deferred to Phase 2)    │
-│  → Cloudflare Pages, gated by Cloudflare Access (v1.9)   │
+│  → Cloudflare Workers + static assets, gated by          │
+│    Cloudflare Access (v1.9, host updated v1.11)          │
 │  /log = second entry → Supabase Auth + RLS (write)       │
 └─────────────────────────────────────────────────────────┘
 ```
@@ -783,9 +856,11 @@ entries into one app, one bundle, with a client-side router. v1.10
 keeps them separate for the first deploy: removing the *need* to split
 the bundles didn't create a *need* to merge them, and there is no
 second page yet for a router to route to (Week and Block don't exist).
-Two static entries deploy correctly on Cloudflare Pages — `log/index.html`
-serves at `/log/` — so the merge is deferred to **Phase 2**, when Week
-and Block exist and a router has somewhere to route. Accepted
+Two static entries deploy correctly under Cloudflare Workers’ static
+assets — a request to `/log/` resolves to `log/index.html` via the
+same directory-index handling `index.html` gets at the root, no extra
+configuration required (v1.11) — so the merge is deferred to **Phase
+2**, when Week and Block exist and a router has somewhere to route. Accepted
 explicitly, per v1.9, and unchanged by this deferral: the Supabase
 publishable key ships in the `/log` entry, not the dashboard entry, for
 now — see the v1.9 amendment above for why shipping it in either is
@@ -803,11 +878,13 @@ coordinate-stripping gate, so neither may reach a public repo. See §11.6.
 **`VITE_BASE_PATH`** was the deploy-time variable carrying the GitHub Pages
 *project-site* subpath (e.g. `/luca-dashboard/`), consumed by
 `vite.config.ts` as the build's `base`. That premise is superseded by v1.9:
-Cloudflare Pages serves from the site root (custom domain or `*.pages.dev`),
-not a repo-name subpath, so this variable's original purpose no longer
-applies. Its mechanism — defaulting to `/` locally, so a developer never
-needs to set it to run the dev server — is unaffected. **Closed by v1.10:**
-the variable stays unset; `base` resolves to `/` under Cloudflare Pages
+neither Cloudflare host serves from a repo-name subpath — Pages served from
+the site root (custom domain or `*.pages.dev`), and Workers with static
+assets does the same (custom domain or `*.workers.dev`, v1.11) — so this
+variable's original purpose no longer applies under either. Its mechanism —
+defaulting to `/` locally, so a developer never needs to set it to run the
+dev server — is unaffected. **Closed by v1.10, unchanged by v1.11:** the
+variable stays unset; `base` resolves to `/` under Cloudflare Workers
 exactly as it does locally, so there is nothing deploy-specific left for
 it to carry.
 
