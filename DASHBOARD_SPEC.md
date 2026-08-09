@@ -1,4 +1,4 @@
-# Training Dashboard — Build Spec v1.8
+# Training Dashboard — Build Spec v1.9
 
 **Athlete:** Luca · **Campaign:** middle-distance, Foundation block → 2032
 **Status:** Phase 0 complete — `daily` table, RLS/grants, and `/log` all
@@ -444,10 +444,180 @@ not refer to Moving Time, which is a separate, unread column.
 
 ---
 
+**Amendments in v1.9 (9 Aug 2026)** — three previously locked decisions are
+reversed, and one new binding rule is added, because the reasoning behind
+each of the three no longer holds once two facts were actually checked
+rather than assumed.
+
+**Deployment check that forced this (not itself a decision).** `/log`
+(§8.5, shipped in commit `bc1aca7`) has never been deployed anywhere.
+`.github/workflows/` contains only `sync.yml`, which is ingest-only by its
+own text ("no frontend exists yet," v1.8 amendment) — there is no
+build/deploy workflow. `web/dist` is gitignored and has never been
+committed. `origin` has no `gh-pages` branch; the only branch is `main`.
+Everything above the ingest layer today runs only via the local Vite dev
+server on Luca's machine. This means decision 3 below costs nothing to
+reverse — there is no live public deployment being migrated away from,
+only a hosting decision that was never acted on.
+
+**1. Host change — supersedes §2 decision 3 and §4's architecture
+diagram/prose.** Host becomes **Cloudflare Pages, with Cloudflare Access
+(Zero Trust) in front**, providing server-side authentication at the edge.
+GitHub Pages is dropped for two reasons: it offers no access control
+outside GitHub Enterprise Cloud, a plan this project has no reason to buy
+for one dashboard; and a client-side "password protection" scheme for a
+static site is theatre here specifically, not in general — this
+dashboard's numbers live in separate JSON files under
+`web/public/data/*.json`, served as ordinary static assets alongside the
+HTML. A gate implemented in the page's own JS runs *after* the browser has
+already been permitted to fetch every static file in the deploy; the JSON
+was always a directly-fetchable sibling of the HTML, reachable with a bare
+`curl` regardless of what the page's JS does or doesn't render. Only a
+gate that intercepts the HTTP request before Cloudflare's edge serves any
+file — Access does exactly this — actually protects it.
+
+Verified before adopting this, 9 Aug 2026, per this amendment's own
+instruction to verify rather than assume: Cloudflare's Zero Trust Free
+plan is $0/month, covers up to 50 users (one is enough), includes Access,
+and supports email one-time-PIN login with no third-party identity
+provider required — an email address is added directly to an Access
+policy and group, no IdP configuration needed. Cloudflare's own
+onboarding now defaults new Zero Trust accounts to Cloudflare's own SSO
+rather than OTP, but OTP remains available to add at any time; nothing
+about the free tier or its $0 price gates this. Sources:
+developers.cloudflare.com's Zero Trust plans/pricing page and its
+"One-time PIN login" identity-provider doc, cross-checked against current
+third-party Zero Trust pricing trackers, checked live during this
+amendment rather than recalled from training data.
+
+The repo stays **public** — no data is committed; `web/public/data/`
+remains gitignored (CLAUDE.md Layout note) and is generated fresh by every
+deploy, exactly as today. What changes is the **site**: the deployed
+Cloudflare Pages site sits behind Access, so the built HTML/JS/JSON is
+reachable only after an authenticated session — where GitHub Pages could
+only ever be all-public, or require an Enterprise Cloud plan this project
+isn't on.
+
+`VITE_BASE_PATH` (§4) was written to carry a GitHub Pages *project-site*
+subpath (e.g. `/luca-dashboard/`). That premise no longer holds — a
+Cloudflare Pages deploy (custom domain or `*.pages.dev`) serves from the
+site root, not a repo-name subpath. The variable's mechanism (`base`
+defaulting to `/` locally, so a developer never sets it to run the dev
+server) is unaffected and needs no change; its purpose-built reason for
+existing, stated in §4, does. Left as a loose end for the implementation
+phase — the exact deploy-time value it should carry under Cloudflare
+Pages, if any, is not decided here and isn't needed to record this
+amendment.
+
+**2. Single build entry — supersedes §4's "two build entries, no client
+router."** The render layer becomes one app, one bundle, a client-side
+router, with `/log` reachable from the dashboard's own navigation, not a
+second static build entry at `web/log/index.html`.
+
+The original split existed for one stated reason: to keep auth code, the
+Supabase client, and any write path out of a bundle that was publicly
+reachable by anyone on the internet — the public dashboard bundle was
+built to carry nothing an anonymous visitor could use to attempt a write.
+That reasoning was conditioned on the dashboard bundle being publicly
+reachable, and decision 1 above removes that condition: with Cloudflare
+Access gating the entire site at the edge, the only person who can reach
+*any* bundle — dashboard or `/log` — is the authenticated athlete. There
+is no anonymous visitor left to keep the write path away from.
+
+**Accepted explicitly:** the Supabase publishable key now ships in the
+single combined bundle, not only in a `/log`-only entry as §4 and §11
+previously described. This is accepted because RLS and the table grants
+to `authenticated` (CLAUDE.md rule 10) were always the actual write
+boundary, never the bundle split — the publishable key is public-by-design
+already (§11 rule 5); what changes is who can *reach* the key at all
+(anyone, under the old GitHub Pages design, vs. only the authenticated
+athlete, under Access), not what the key can *do*.
+
+**3. RLS is still the boundary — new, binding, not previously stated
+anywhere in this spec.** Cloudflare Access protects the *page*; it is not
+a substitute for the *database* boundary. Supabase Auth and RLS are
+unchanged by this amendment: `/log` still requires its own Supabase
+sign-in (§8.5's email+password form, unchanged), and writes still depend
+on RLS policies plus the `authenticated`-role grants from CLAUDE.md rule
+10. An authenticated Cloudflare Access session proves only that a request
+reached the edge with a valid Access JWT for the athlete's own email — it
+carries no Supabase claims, and PostgREST never sees it. Cloudflare Access
+must never be treated as replacing a Supabase RLS policy, a table grant,
+or the `/log` sign-in step, on this or any future page. Two independent
+gates, same two-gate principle as CLAUDE.md rule 10's grants/RLS pair
+(and migrations 004/005's role-by-role application of it), one more layer
+on top.
+
+**4. Temporal semantics of `daily` — new, binding, previously undefined
+anywhere in this spec.** Confirmed with the athlete: a `daily` row's
+`date` is the calendar day the *behaviours* happened, not the day their
+effects are measured. Garmin files a night's sleep under the **wake**
+date, not the date the athlete went to bed — confirmed against the one
+real `biometrics` row that exists as of this commit: the FR70 was first
+worn the night of 7–8 Aug 2026, and the resulting sleep/RHR/HRV row is
+dated **2026-08-08**, the wake date, not 2026-08-07.
+
+**Verification against further nights, as instructed:** checked directly
+against the live database while writing this amendment (9 Aug 2026) —
+`biometrics` and `daily` each currently hold **exactly one row**, both
+dated 8 Aug 2026. There is no second night yet to cross-check the wake-
+date rule against. This rule is therefore recorded as binding on the
+strength of that single confirmed night plus the athlete's direct
+statement of how Garmin's own dating works, not on repeated confirmation
+— it should be re-verified against the next several real nights as
+`biometrics` accumulates rows, and this paragraph updated with the
+result.
+
+Therefore, binding on the Lab page (§8.4) and any future analysis joining
+`daily` to `biometrics` — see §5 and §8.4 for the corresponding edits:
+every habit field in `daily` (`creatine`, `protein_breakfast`, `alcohol`,
+`late_meal`, `device_in_bed`, `cold_room`, `breathing_exercises`,
+`stretching`, `study_hours`) and the `journal` text describe behaviour
+that affects the *following* night's sleep. When any of these are joined
+to `sleep_total_min` / `rhr` / `hrv_overnight` or any other sleep-derived
+field in `biometrics`, **the join is at `daily.date + 1 = biometrics.date`,
+never same-date.** A same-date join would pair Tuesday's alcohol flag
+against Monday night's sleep — the night *before* the drink, not after
+it.
+
+`shin` and `illness` are the exception, unaffected by this rule: both are
+same-day state, not forward-looking habits — consistent with §8.5 already
+grouping them separately as *Status* (row 2) rather than under any habit
+block (rows 3–6). They join at **date + 0**, exactly as `shin_series`
+(§7) already does today.
+
+This is not a new *kind* of rule for this spec — §7's `impact_mechanics`
+already joins `avg_cadence` / `avg_vertical_oscillation` /
+`avg_vertical_ratio` to `daily.shin` at date + 1 *and* date + 2.
+Date-offset joins are an established pattern here; this amendment extends
+the same pattern to the habit fields against `biometrics` and states it
+as a general rule, rather than leaving each future Lab panel to
+rediscover it independently.
+
+**5. Journal prompt — amends §5 and §8.5.** The current prompt, *"What
+most affected your recovery and sleep today?"*, is ambiguous about
+whether "today" means the sleep just had (looking back, this morning) or
+the sleep about to happen (looking ahead, tonight) — exactly the
+ambiguity item 4 above resolves for every other field in `daily`, but the
+prompt itself was never brought in line with it. Per item 4, the answer
+is the night ahead. Replacement prompt, short enough to sit as the form
+label per §8.5's existing pattern:
+
+> **"What might affect tonight's sleep?"**
+
+This removes the tense ambiguity directly — "tonight," not "today" — and
+matches what the field actually captures: free text describing the
+current day's behaviour, framed as a forward-looking recovery note,
+joined at date + 1 exactly like the habit booleans beside it.
+
+---
+
 ## 1. What this is
 
-A private-by-design, publicly-hosted training dashboard that answers four
-questions and refuses to answer a fifth:
+A private-by-design training dashboard — public source repo, privately-hosted
+site behind Cloudflare Access (§2 decision 3, v1.9; previously
+publicly-hosted on GitHub Pages) — that answers four questions and refuses
+to answer a fifth:
 
 1. Is the shin loading up?
 2. Are the easy runs actually easy?
@@ -472,7 +642,7 @@ input to our own metrics.
 |---|---|---|
 | 1 | Store = **Supabase** (Postgres, free tier) | Airtable free caps at 1,000 rows/base; ~790 rows/yr means a ceiling in ~15 months, then ≈€240/yr. Supabase 500 MB is never reached. |
 | 2 | Daily-entry write path = **`/log` route, Supabase Auth + RLS, password** | Public site stays read-only. Only Luca's account can write. |
-| 3 | Host = **GitHub Pages, public** | Free. Safe only because of decision 4. |
+| 3 | Host = **Cloudflare Pages, site private behind Cloudflare Access** (superseded v1.9 — was GitHub Pages, public) | GitHub Pages has no access control outside GitHub Enterprise Cloud, and a client-side gate is theatre here — the JSON under `web/public/data/` is a directly-fetchable static file regardless of the HTML/JS. Cloudflare Zero Trust's free tier (≤50 users, $0/mo, verified 9 Aug 2026) includes Access with email one-time-PIN login. Repo stays public; the deployed site does not. See the v1.9 amendment above. |
 | 4 | **No GPS coordinates ever leave the compute layer** | Public site + home-start runs = published absence schedule. No panel needs location. |
 | 5 | **No surname anywhere on the site** | Health data, permanent, indexed, two years from a job market. |
 | 6 | Charts = **ECharts**, interactive on all breakpoints | Native `dataZoom` for the range selector; tap-to-inspect is first-class. One codebase, no static mobile fork. |
@@ -540,8 +710,9 @@ threshold and displays `insufficient data — 14/60 days` instead. See §8.4.
 │                writes public/data/*.json                │
 └──────────────────────────┬──────────────────────────────┘
 ┌─ RENDER ───────────────── ▼ ────────────────────────────┐
-│  Vite + React + ECharts → GitHub Pages (public, RO)     │
-│  /log/ route → Supabase Auth + RLS (write, private)     │
+│  Vite + React + ECharts, single bundle, client router    │
+│  → Cloudflare Pages, gated by Cloudflare Access (v1.9)   │
+│  /log route (in-app) → Supabase Auth + RLS (write)       │
 └─────────────────────────────────────────────────────────┘
 ```
 
@@ -553,14 +724,24 @@ screen was computed in `metrics.py` and is therefore testable and versioned.
 Latitude and longitude are dropped before any file is written to `public/`. A
 unit test asserts no output JSON contains a key matching `/lat|lon|coord|polyline/`.
 
-**Two build entries, no client router.** The render layer is a static
-multi-page build: `web/index.html` (public dashboard) and `web/log/index.html`
-(the write surface). `/log/` therefore resolves as a real path on GitHub Pages
-with no `404.html` redirect trick, and — the actual reason — **the public
-dashboard bundle contains no auth code, no Supabase client, and no write
-path.** The only credential in any bundle is the publishable key, which ships
-only in the `/log/` entry. All fonts are self-hosted; the site makes no
-third-party requests.
+**Single build entry (v1.9) — supersedes the two-entry split this section
+originally specified.** The render layer was originally a static
+multi-page build — `web/index.html` (public dashboard) and
+`web/log/index.html` (the write surface) — for one stated reason: **the
+public dashboard bundle contained no auth code, no Supabase client, and no
+write path**, kept out of a bundle any anonymous visitor could load. That
+reasoning depended on the dashboard bundle being publicly reachable; it no
+longer is, now that Cloudflare Access (§2 decision 3, v1.9) gates the
+entire site at the edge — the only person who can reach any bundle,
+dashboard or `/log`, is the authenticated athlete. The render layer is now
+one app, one bundle, a client-side router, with `/log` reachable from the
+dashboard's own navigation rather than a separate build entry. Accepted
+explicitly: the Supabase publishable key now ships in the single combined
+bundle rather than only in a `/log`-only entry — see the v1.9 amendment
+above for why this is safe (RLS and the `authenticated`-role grants were
+always the actual write boundary, never the bundle split). All fonts are
+self-hosted; the site makes no third-party requests beyond the Cloudflare
+Access authentication flow itself.
 
 **Raw archives and backups never touch the repo.** They live in private
 Supabase Storage buckets. `archive/` holds unstripped Garmin JSON — GPS
@@ -568,10 +749,15 @@ polylines and start locations included — and `backups/` holds `pg_dump` output
 including the free-text `journal` column. Neither passes through the
 coordinate-stripping gate, so neither may reach a public repo. See §11.6.
 
-**`VITE_BASE_PATH`** is the deploy-time variable carrying the GitHub Pages
-subpath (e.g. `/luca-dashboard/`), consumed by `vite.config.ts` as the build's
-`base`. It defaults to `/` locally, so a developer never needs to set it to
-run the site on a dev server.
+**`VITE_BASE_PATH`** was the deploy-time variable carrying the GitHub Pages
+*project-site* subpath (e.g. `/luca-dashboard/`), consumed by
+`vite.config.ts` as the build's `base`. That premise is superseded by v1.9:
+Cloudflare Pages serves from the site root (custom domain or `*.pages.dev`),
+not a repo-name subpath, so this variable's original purpose no longer
+applies. Its mechanism — defaulting to `/` locally, so a developer never
+needs to set it to run the dev server — is unaffected. What value, if any,
+it should carry under Cloudflare Pages is left open for the implementation
+phase, not decided here.
 
 ---
 
@@ -592,7 +778,7 @@ run the site on a dev server.
 | `stretching` | bool | recovery habit — **not** logged as a shin measure |
 | `illness` | bool | only habit with an unambiguous effect in prior data |
 | `study_hours` | numeric, nullable | captured now, rendered ~2027. Untouched submits `NULL`; `0` is a real value in term time. |
-| `journal` | text | prompt: *"What most affected your recovery and sleep today?"* |
+| `journal` | text | prompt (v1.9, superseded — see below): *"What might affect tonight's sleep?"* |
 
 **The null rule for `shin` — binding on every layer.**
 `shin` is nullable and has **no default**. `NULL` means *not answered*; `0`
@@ -604,6 +790,20 @@ site — the one chart the dashboard exists for. Therefore:
   so `NULL` can only ever mean *a day that was never logged*.
 - `metrics.py` never coerces, fills, interpolates, or zero-fills it.
 - The render layer gives it a third marker state — see §7 `shin_series` and §10.
+
+**Temporal semantics of `daily` — binding, added v1.9.** A `daily` row's
+`date` is the calendar day the *behaviours* happened, not the day their
+effects show up in `biometrics`. Garmin files a night's sleep under the
+**wake** date — confirmed against the one real `biometrics` row as of this
+amendment: the FR70's first night (7–8 Aug 2026) produced a row dated
+2026-08-08. Every habit field above (`creatine` through `study_hours`) and
+`journal` describe behaviour affecting the *following* night's sleep — any
+join to `biometrics.sleep_total_min` / `rhr` / `hrv_overnight` or similar
+must be at `daily.date + 1`, never same-date. `shin` and `illness` are the
+exception — same-day state, joined at date + 0, same as `shin_series`
+below. Full reasoning, the live-data check, and the precedent in
+`impact_mechanics`'s own date+1/date+2 joins: see the v1.9 amendment
+above. Binding on §8.4 (Lab) and any future analysis.
 
 ### `biometrics` — Garmin, one row per day
 `date` PK · `sleep_total_min` · `sleep_deep_min` · `sleep_rem_min` ·
@@ -947,6 +1147,17 @@ insufficient data — 14/60 days
 Thresholds: ≥ 60 days per variable, ≥ 20 observations at each level of a binary,
 and the device break resets the count. No exceptions, no override, no "preview".
 
+**Join rule — binding, added v1.9.** Every `daily` habit field
+(`creatine`, `protein_breakfast`, `alcohol`, `late_meal`, `device_in_bed`,
+`cold_room`, `breathing_exercises`, `stretching`, `study_hours`) and
+`journal` join to `biometrics` at **`daily.date + 1 = biometrics.date`** —
+Garmin files a night's sleep under the wake date, so a habit logged for
+day N affects the `biometrics` row dated N+1, never the row dated N.
+`shin` and `illness` join at **date + 0** — same-day state, not a
+forward-looking habit. See §5's "Temporal semantics of `daily`" for the
+full reasoning and the live-data check this rests on. No Lab panel may
+join `daily` to `biometrics` same-date.
+
 **Note on interpretation, written into the page itself:** these panels show
 association only. Observational habit data cannot establish causation — the
 prior Bevel logs produced *device in bed improves sleep* and *10,000 steps harms
@@ -955,12 +1166,16 @@ alternating-block trials, which are a training decision, not a dashboard feature
 
 ### 8.5 Log — the write surface  *(settled 8 Aug 2026)*
 
-Not a dashboard page. Separate build entry (§4), authenticated, phone-first,
-single column, no desktop layout. Sign-in is email + password only — no signup
-UI, no magic link, no reset UI, because public signups are disabled.
-Sign-in failures are shown inline with the real error text, never a generic
-"something went wrong" — the same transparency rule already binding on save
-failures below.
+A route within the single app bundle (§4, v1.9 — previously a separate build
+entry), reachable from the dashboard's own navigation, authenticated,
+phone-first, single column, no desktop layout. Reaching the app at all
+requires an authenticated Cloudflare Access session (§2 decision 3, v1.9);
+independently of that, this route's own Supabase sign-in is email + password
+only — no signup UI, no magic link, no reset UI, because public signups are
+disabled. Cloudflare Access is not a substitute for this sign-in step — see
+the v1.9 amendment's binding rule 3. Sign-in failures are shown inline with
+the real error text, never a generic "something went wrong" — the same
+transparency rule already binding on save failures below.
 
 **Grouped, one screen, journal always visible.** The nine booleans are *not*
 homogeneous — they mix polarity (creatine good, alcohol bad) and domain, and a
@@ -978,7 +1193,7 @@ tap gets filled for two weeks and then never again.
 | 4 | **Sleep setup** | `device_in_bed`, `cold_room` | |
 | 5 | **Recovery work** | `breathing_exercises`, `stretching` | `stretching` is a recovery habit, **not** a shin measure. |
 | 6 | **Study** | `study_hours` | Stepper, ±0.5, no numeric keyboard. Untouched = `NULL`. The field can be cleared back to untouched at any time — a `Clear` control, same null-vs-zero stakes as `shin` (§5): `0` is a real value once touched, never a placeholder for unanswered, and one accidental tap must not be able to turn an unlogged day into a permanent `0`. |
-| 7 | **Journal** | `journal` | Prompt is the label. One line high, grows on focus. Optional. |
+| 7 | **Journal** | `journal` | Prompt is the label: *"What might affect tonight's sleep?"* (v1.9 — see §5's temporal semantics note; replaces the original, tense-ambiguous prompt). One line high, grows on focus. Optional. |
 | 8 | Sticky footer | Save | **Disabled until `shin` is answered.** The only required field. |
 
 - **Writes are `upsert` on `date`, never `insert`** — same rule as ingest (§6),
@@ -1055,16 +1270,28 @@ same information, survives colour-blindness, and doesn't editorialise.
 1. No latitude, longitude, polyline, or start location — stripped in compute, asserted by test.
 2. No maps. No route panels. Ever.
 3. No surname, no club name, no photograph.
-4. Public site is read-only. All writes go through authenticated `/log`.
+4. The dashboard is read-only. All writes go through authenticated `/log`,
+   which requires its own Supabase sign-in regardless of what gates the
+   site itself (v1.9 rule 3, below).
 5. Secrets exist only in GitHub Actions secrets. Never in the repo, never in the
    bundle. The one exception is the Supabase **publishable** key, which is public
-   by design and ships only in the `/log/` entry; RLS plus table-level grants to
-   `authenticated` only are the actual boundary.
+   by design and ships in the single site bundle (v1.9 — previously only in a
+   separate `/log/` entry, when the render layer had two build entries; see
+   §4); RLS plus table-level grants to `authenticated` only are the actual
+   boundary, not which bundle the key ships in.
 6. **`archive/` and `backups/` are permanently gitignored and live in private
    Supabase Storage buckets.** The repo is public. `archive/` holds unstripped
    Garmin JSON (polylines, start locations); `backups/` holds `pg_dump` output
    including `journal`. Neither passes the §4 coordinate gate, so neither may
    ever be committed.
+7. **Cloudflare Access is not a substitute for RLS — binding, added v1.9.**
+   Access (§2 decision 3) gates the deployed *site*: whether a request
+   reaches Cloudflare's edge with a valid authenticated session at all. It
+   is a separate, additional layer in front of rule 4 above, not a
+   replacement for it. It carries no Supabase claims and is invisible to
+   PostgREST; RLS and the `authenticated`-role grants (CLAUDE.md rule 10)
+   remain the sole write boundary for `/log`, exactly as before Access
+   existed. See the v1.9 amendment's binding rule 3 for the full reasoning.
 
 ---
 
