@@ -1,7 +1,7 @@
-# Training Dashboard — Build Spec v1.1
+# Training Dashboard — Build Spec v1.2
 
 **Athlete:** Luca · **Campaign:** middle-distance, Foundation block → 2032
-**Status:** Phase 0 in progress — `daily` table applied, `/log` route next · **Date:** 8 Aug 2026
+**Status:** Phase 0 in progress — `daily` table applied, `/log` route next · **Date:** 9 Aug 2026
 
 This document is the contract. It goes in the repo root alongside `CLAUDE.md`.
 Anything not defined here is an open question, not an implementation detail to
@@ -12,6 +12,23 @@ improvise. If the build needs a decision this file doesn't contain, stop and ask
 (§4, §11.6); the render layer is a two-entry static build with no client router
 (§4); null-vs-zero for `shin` is defined and made binding on the compute and
 render layers (§5, §7, §10); the `/log` form layout is settled and locked (§8.5).
+
+**Amendments in v1.2 (9 Aug 2026)** — forced by the FR70 arriving and being
+worn from the night of 7–8 Aug: the fixture-based Phase 1 / Phase 3 split no
+longer applies, since there is no fixture stage left to build against —
+ingest is built directly against the real `python-garminconnect` API from the
+start (§12). `activities.session_id` is added without a foreign-key
+constraint, since `sessions` does not exist until the Phase 2 migration
+(§5, §12). Following an exploratory pull against the real FR70 API: `biometrics.respiration_avg`
+is renamed to `respiration_overnight` and bound to the sleep-endpoint
+value, not the waking one (§5); `biometrics`/`activities` field mappings are
+recorded against confirmed `python-garminconnect` response shapes, including
+the unit conversions ingest performs and that `avg_pace_s_per_km` is derived
+(§5); Garmin's own sleep score, Training Effect, VO2max and
+`activityTrainingLoad` are explicitly excluded, same class as Training
+Readiness/Status (§1, §5); wrist running power is corrected to say it is
+retained in the raw archive only, not stored in `activities` — §7 previously
+said "stored" with no corresponding column in §5 (§7).
 
 ---
 
@@ -179,10 +196,31 @@ site — the one chart the dashboard exists for. Therefore:
 ### `biometrics` — Garmin, one row per day
 `date` PK · `sleep_total_min` · `sleep_deep_min` · `sleep_rem_min` ·
 `sleep_light_min` · `sleep_awake_min` · `rhr` · `hrv_overnight` ·
-`hrv_status` · `respiration_avg` · `body_battery_min` · `body_battery_max` ·
-`steps` · `stress_avg` · `device` (enum: `amazfit` | `fr70`)
+`hrv_status` · `respiration_overnight` · `body_battery_min` ·
+`body_battery_max` · `steps` · `stress_avg` · `device` (enum: `amazfit` | `fr70`)
 
 `device` exists so the switch break is queryable, not hard-coded.
+
+**Field mapping, confirmed against a real FR70 pull (v1.2, 9 Aug 2026)** —
+binding on the ingest layer, not an implementation detail to re-derive:
+
+| Column | `python-garminconnect` source | Notes |
+|---|---|---|
+| `sleep_total_min`, `_deep_min`, `_rem_min`, `_light_min`, `_awake_min` | `get_sleep_data(date).dailySleepDTO.{sleepTimeSeconds,deepSleepSeconds,remSleepSeconds,lightSleepSeconds,awakeSleepSeconds}` | API returns **seconds** — ingest divides by 60 |
+| `rhr` | `get_stats(date).restingHeartRate` | **No fallback.** `dailySleepDTO.restingHeartRate` also exists and is a different sample; if `stats` is null, write `NULL` — never substitute the sleep-endpoint value |
+| `hrv_overnight` | `get_hrv_data(date).hrvSummary.lastNightAvg` | not `dailySleepDTO.avgOvernightHrv` — same-shaped field, different endpoint, not used |
+| `hrv_status` | `get_hrv_data(date).hrvSummary.status` | stored **as returned**, including the literal string `"NONE"` — that is Garmin correctly reporting insufficient baseline history (spec's own ≥21-day gate), not a missing value. Never coerced to `NULL`. |
+| `respiration_overnight` | `get_sleep_data(date).dailySleepDTO.averageRespirationValue` | not `get_stats(date).avgWakingRespirationValue` (waking respiration tracks daytime activity; overnight is measured under constant conditions and is the established early illness/overreaching marker) |
+| `body_battery_min`, `body_battery_max` | `get_stats(date).bodyBatteryLowestValue` / `.bodyBatteryHighestValue` | single clean source, no ambiguity |
+| `steps` | `get_stats(date).totalSteps` | |
+| `stress_avg` | `get_stats(date).averageStressLevel` | |
+| `device` | **not an API field on any of the above.** Hardcoded `'fr70'` in the Garmin ingest path. The `'amazfit'` value is written only by the one-time Strava archive import (§2 decision 9) — a different code path that never touches this ingest module, so there is no live source to read `device` from here. |
+
+**Explicitly excluded from `biometrics`** — Garmin's own sleep score
+(`sleepScores`, `sleepScoreInsight`, `sleepScoreFeedback`, `sleepNeed`) is a
+model output, the same class as Training Readiness/Status excluded by §1.
+Not stored. The raw archive (§4, §6) retains it, so this can be revisited
+without re-pulling history.
 
 ### `activities` — one row per run
 `id` PK · `date` · `type` · `distance_km` · `duration_s` · `avg_pace_s_per_km` ·
@@ -192,6 +230,37 @@ site — the one chart the dashboard exists for. Therefore:
 
 **No coordinates. No polyline. No start location.** Not stored, not fetched into
 the output layer.
+
+**`session_id` has no foreign-key constraint until Phase 2 (17 Aug).** The
+column is created in the 002 migration so `activities` can be joined once
+`sessions` lands, but `sessions` itself does not exist yet — referential
+integrity is added in the same migration that creates it. See §12.
+
+**Field mapping, confirmed against a real FR70 run (v1.2, 9 Aug 2026)** —
+sourced from `get_activity(id).summaryDTO` (the aggregate summary), not
+`get_activity_details`, which returns per-point time series and is not used
+by any column below:
+
+| Column | `python-garminconnect` source | Notes |
+|---|---|---|
+| `id` | `activityId` | Garmin's own numeric id — the upsert key, see below |
+| `type` | `activityTypeDTO.typeKey` (e.g. `"running"`) | |
+| `distance_km` | `summaryDTO.distance` | API returns **metres** — ingest divides by 1000 |
+| `duration_s` | `summaryDTO.duration` | API returns **fractional seconds**; ingest rounds to the nearest int — sub-second precision is <0.04% pace error, immaterial to any band metric |
+| `avg_pace_s_per_km` | **derived, not fetched** | `duration_s / distance_km`, computed at ingest time |
+| `avg_hr`, `max_hr` | `summaryDTO.averageHR`, `.maxHR` | API returns float, always a whole bpm value |
+| `avg_cadence` | `summaryDTO.averageRunCadence` | |
+| `avg_vertical_oscillation` | `summaryDTO.verticalOscillation` | |
+| `avg_vertical_ratio` | `summaryDTO.verticalRatio` | |
+| `avg_ground_contact_ms` | `summaryDTO.groundContactTime` | |
+| `elevation_gain_m` | `summaryDTO.elevationGain` | |
+| `session_id`, `raw_archive_path` | not API fields | ingest-generated: joined by date, and the storage path written after archiving |
+
+**Explicitly excluded from `activities`** — Training Effect
+(`aerobicTrainingEffect`, `anaerobicTrainingEffect`, `trainingEffectLabel`),
+VO2max (`vO2MaxValue`), and `activityTrainingLoad` are model outputs, same
+class as Training Readiness/Status excluded by §1. Not stored; retained in
+the raw archive. See §7 for wrist running power, excluded the same way.
 
 ### `sessions` — the plan (ported from Airtable, 17 Aug)
 Existing shape retained: `date` · `week` · `phase` · `session_type` · `purpose` ·
@@ -208,15 +277,21 @@ Ported as-is. `weekly.dates` now Mon–Sun. `benchmarks` holds the corrected
 
 ## 6. Ingest
 
-**Development order matters:** `fixtures/garmin_daily.json` and
-`fixtures/garmin_activity.json` are committed first, shaped exactly like the
-library's return values. Every layer above ingest is built and tested against
-them. Watch arrival = swapping the client, nothing else.
+**Superseded by v1.2 (§12 note):** the watch arrived before the ingest layer
+was built, so there is no hand-written-fixture stage. `garmin_client.py` is
+written directly against the real `python-garminconnect` API. Fixtures in
+`ingest/fixtures/` are captured real API responses, saved so every layer
+above ingest can be built and tested against a stable, real-shaped snapshot
+without hitting the live API on every run — the fixtures now record actual
+observed responses rather than a hand-authored guess at their shape.
 
 Garmin auth: token stored in GitHub Actions secrets, refreshed by the job.
 Sync is idempotent — re-running a day overwrites rather than duplicates. Given
 what duplicate rows did to the Airtable base, this is enforced with a
-`ON CONFLICT (date) DO UPDATE` upsert, never an insert.
+`ON CONFLICT (date) DO UPDATE` upsert, never an insert. For `activities`
+specifically the conflict target is `ON CONFLICT (id) DO UPDATE`, not
+`date` — a day can hold more than one activity, so Garmin's own numeric
+`activityId` is the natural key there, not the date.
 
 ---
 
@@ -241,8 +316,9 @@ These are binding. The frontend must not recompute or reinterpret them.
 **Explicitly not computed:** ACWR / load ratio (mathematical coupling between
 numerator and denominator produces correlations that aren't there; also needs
 months of history we don't have). Any readiness or recovery composite.
-Wrist-based running power is stored but not used in any derived metric — it is
-a model output, not a measurement.
+Wrist-based running power is **retained in the raw archive only — not
+stored in `activities`** (§5 has no power column, and none is added). It is
+a model output, not a measurement, same class as Training Effect and VO2max.
 Also not computed: **any average, mean, or rolling mean of `shin`.** A 0–3
 ordinal with gaps has no meaningful mean, and averaging is precisely what would
 hide the single `2` that matters.
@@ -420,15 +496,21 @@ same information, survives colour-blindness, and doesn't editorialise.
 | Phase | Trigger | Deliverable |
 |---|---|---|
 | **0** | Now | Supabase project ✅, `daily` table + RLS + grants ✅, `/log` route ⏳. Logging starts the night `/log` ships. |
-| **1** | Repo scaffold | Actions pipeline, fixtures, `metrics.py`, Week + Block off `sessions` data |
+| **1** | Watch arrived (8 Aug) | Repo scaffold, Actions pipeline, `garmin_client.py` against the real API, `biometrics`/`activities` migration + RLS + grants, `metrics.py`, backfill, device-break marker, Week + Block off `sessions` data, Today goes live |
 | **2** | 17 Aug — Meso 1 boundary | Port `sessions`/`weekly`/`benchmarks` from Airtable |
-| **3** | Watch arrives | Swap fixtures for `garminconnect`, backfill, mark device break, Today goes live |
-| **4** | +21 days on FR70 | HRV/RHR baselines established, bands become real, autoregulation panel on |
-| **5** | Oct, post-benchmark | Campaign page — trajectory vs floor/target/stretch |
-| **6** | 2027 | Lab unlocks, panel by panel, as each `min_n` is crossed |
+| **3** | +21 days on FR70 | HRV/RHR baselines established, bands become real, autoregulation panel on |
+| **4** | Oct, post-benchmark | Campaign page — trajectory vs floor/target/stretch |
+| **5** | 2027 | Lab unlocks, panel by panel, as each `min_n` is crossed |
 
-Phase 4 completing before benchmark week (21–27 Sep) is the reason the watch
+Phase 3 completing before benchmark week (21–27 Sep) is the reason the watch
 must be worn overnight from the day it arrives.
+
+**v1.2 note:** phases 1 and 3 of v1.1 (fixture-based ingest, then swap for
+the live API when the watch arrived) collapse into one phase here. The watch
+arrived before the ingest layer was built, so there is no fixture stage to
+build first — ingest is written directly against `python-garminconnect` from
+the start. `ingest/fixtures/` still exists, but now holds *captured real
+responses* used as test fixtures, not hand-written stand-ins.
 
 ---
 
