@@ -50,12 +50,18 @@ implements what was decided.
    GitHub Actions secrets. Never in code, never in a `.env` that gets committed,
    never in the client bundle.
 9. **No surname, club name, or photograph** anywhere in the repo or the site.
-10. **Every new table needs explicit grants, not just RLS.** This Supabase
-    project has table auto-exposure disabled, so PostgREST rejects any
-    request with no table-level grant, regardless of RLS policy. Every
-    migration that creates a table reachable via the Data API must grant
-    `select, insert, update, delete` to `authenticated` and grant nothing to
-    `anon`. Grants and RLS are independent gates; both are required.
+10. **Every new table needs explicit grants to `authenticated` AND an
+    explicit revoke from `anon`; both are required.** This Supabase project
+    has table auto-exposure disabled, so PostgREST rejects any request with
+    no table-level grant, regardless of RLS policy. Every migration that
+    creates a table reachable via the Data API must `grant select, insert,
+    update, delete` to `authenticated`. Separately, this project's default
+    privileges grant `anon` `REFERENCES`/`TRIGGER`/`TRUNCATE` on every new
+    table regardless of the auto-exposure setting, and granting to
+    `authenticated` does not remove them — omitting a grant to `anon` is
+    not the same as `anon` having none. Every migration must also
+    `revoke all on table ... from anon` explicitly. Grants and RLS are
+    independent gates; both are required.
 11. **Every `plpgsql` function sets `search_path = ''`** and schema-qualifies
     every built-in it calls (e.g. `pg_catalog.now()`, not `now()`). An
     unpinned search path on a `SECURITY DEFINER`-adjacent function is a

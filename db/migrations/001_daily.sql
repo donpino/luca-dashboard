@@ -68,3 +68,9 @@ grant select, insert, update, delete on table public.daily to authenticated;
 -- No grant to anon: the public site reads only pre-computed JSON in
 -- web/public/data/, never the database directly, so the anon role needs
 -- zero privileges on this table.
+--
+-- This project's default privileges grant anon REFERENCES/TRIGGER/TRUNCATE
+-- on every new table regardless of "Automatically expose new tables" —
+-- granting to authenticated does not remove them. Explicit revoke is
+-- required, not implied by the absence of a grant. CLAUDE.md rule 10.
+revoke all on table public.daily from anon;

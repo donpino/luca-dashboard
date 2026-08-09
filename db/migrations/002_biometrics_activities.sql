@@ -76,6 +76,12 @@ create policy "owner_full_access"
 -- database directly.
 grant select, insert, update, delete on table public.biometrics to authenticated;
 
+-- This project's default privileges grant anon REFERENCES/TRIGGER/TRUNCATE
+-- on every new table regardless of "Automatically expose new tables" —
+-- granting to authenticated does not remove them. Explicit revoke is
+-- required, not implied by the absence of a grant. CLAUDE.md rule 10.
+revoke all on table public.biometrics from anon;
+
 -- ============================================================
 -- activities — one row per run (or other logged session)
 -- ============================================================
@@ -128,3 +134,9 @@ create policy "owner_full_access"
   with check (auth.uid() = 'b026f73c-d178-4a67-ac15-a4435e3b554d'::uuid);
 
 grant select, insert, update, delete on table public.activities to authenticated;
+
+-- This project's default privileges grant anon REFERENCES/TRIGGER/TRUNCATE
+-- on every new table regardless of "Automatically expose new tables" —
+-- granting to authenticated does not remove them. Explicit revoke is
+-- required, not implied by the absence of a grant. CLAUDE.md rule 10.
+revoke all on table public.activities from anon;
