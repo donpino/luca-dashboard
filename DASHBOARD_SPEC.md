@@ -1,10 +1,10 @@
-# Training Dashboard — Build Spec v1.4
+# Training Dashboard — Build Spec v1.5
 
 **Athlete:** Luca · **Campaign:** middle-distance, Foundation block → 2032
 **Status:** Phase 0 complete — `daily` table, RLS/grants, and `/log` all
 shipped, in nightly use since 8 Aug. Phase 1 in progress —
-`garmin_client.py`, `biometrics`/`activities` migrations, and `sync.py`
-backfill done; `metrics.py` and the Strava archive import next. ·
+`garmin_client.py`, `biometrics`/`activities` migrations, `sync.py`
+backfill, and the Strava archive import done; `metrics.py` next. ·
 **Date:** 9 Aug 2026
 
 This document is the contract. It goes in the repo root alongside `CLAUDE.md`.
@@ -96,6 +96,99 @@ migration was written. This is CLAUDE.md rule 10's two-gate model
 `public.device_type`, matching what v1.3's correction paragraph above
 already called it. No correction needed.
 
+**Amendments in v1.5 (9 Aug 2026)** — forced by writing and running
+`ingest/strava_import.py`, the one-time archive backfill (spec decision
+9, §6): the import script reads the athlete's Strava account data export
+(`activities.csv` plus, unopened, an `activities/` folder of raw
+`.fit.gz` files) from a directory passed as a **required CLI argument
+with no default**, checked at runtime to reject any path inside the repo
+— the export is GPS-bearing and the repo is public (CLAUDE.md rule 14).
+The 7 Aug 2026 date boundary from §6 is enforced exactly as written: rows
+dated 8 Aug 2026 or later are skipped and counted in the run summary,
+never written — one row (the 8 Aug run, present in both sources under
+different ids) was skipped on the first real run.
+
+**Decision 9 is corrected, not just re-affirmed.** It previously read
+"seeds Dec 2025–Aug 2026 history"; that estimate was written before
+anyone had inspected the real export, which in fact runs **13 May 2023 →
+7 Aug 2026**. The import applies no lower date bound — only the §6 upper
+boundary — and pulls the full available range. Rationale, decided with
+the athlete at import time: storage cost is negligible on the free tier,
+and pre-Dec-2025 rows are real athletic history that cannot be
+regenerated if discarded now. Decision 9 now reads "seeds the full
+Strava export history (13 May 2023 → 7 Aug 2026), then dropped." Rows
+before roughly October 2025 predate the athlete taking up track and are
+football-era training — a different training context than anything else
+in the dashboard, flagged here so it isn't mistaken for a data error
+later.
+
+**Strava `Activity Type` → canonical `type` mapping, as actually
+implemented** (`ingest/strava_import.py TYPE_MAP`), confirmed against
+the real export's seven distinct values:
+
+| Strava `Activity Type` | Canonical `type` | Note |
+|---|---|---|
+| `Run` | `running` | |
+| `Ride` | `cycling` | Outdoor and stationary/indoor rides are not distinguishable in this export and are not distinguished — both are cycling, both excluded from `weekly_km` (CLAUDE.md rule 6) regardless. |
+| `Workout` | `other` | Decided with the athlete: this Strava bucket mixes real interval-running sessions (Italian names — `Ripetute`, `Velocità lunga`, `Ripetute sotto la pioggia` — track-repeat sessions) with unrelated sports (`Padel`, `Beach Volley`, `Go Kart`). Every one of the 77 rows in the real export has `distance = 0`, so the choice doesn't move `weekly_km`, but it is a known data gap, recorded below. |
+| `Weight Training`, `Walk`, `Swim`, `Hike` | `other` | Not running, not cycling; unambiguous. |
+
+Any Strava `Activity Type` outside this table is a hard ingest error
+(`UnmappedActivityTypeError`) that aborts before any write — same rule
+as the Garmin path's `TYPE_MAP` (§5, v1.3).
+
+**Known data gap, recorded rather than silently accepted:** all 77
+`Workout`-type rows in the real export carry `distance = 0`, including
+the ones that are genuine track-interval running sessions Strava never
+captured distance for. They import as `type = 'other'`, `distance_km =
+0`. Any pre-8-Aug-2026 `weekly_km` or running-volume read therefore
+**understates true running volume by an unknown amount** and must be
+treated as a floor, not a measurement, by any panel or analysis that
+reads that range.
+
+**`avg_cadence` is written `NULL` on every Strava-sourced row, despite
+the export in fact carrying an "Average Cadence" column** — v1.3's
+"Strava-sourced rows carry structural NULLs" table (§5) assumed the field
+was entirely absent; it isn't, but it's unsafe to use anyway. Strava's
+column is per-leg strides/min; Garmin's `summaryDTO.averageRunCadence`
+(§5's existing mapping) is full steps/min. The two were never confirmed
+equivalent, and `impact_mechanics` (§7) joins `avg_cadence` across both
+sources by date — importing an unverified-unit value would silently
+corrupt that panel, which is worse than the gap it would fill. The
+export's `Average Vertical Oscillation` / `Ground Contact Time` columns
+genuinely do not exist (confirmed against the real header), so
+`avg_vertical_oscillation`, `avg_vertical_ratio`, and
+`avg_ground_contact_ms` remain true structural NULLs as v1.3 described.
+`avg_hr`/`max_hr` are imported when the export row carries them, `NULL`
+when blank — CLAUDE.md rule 12.
+
+**Units, as actually applied.** The export's CSV header repeats some
+column names — two columns called `Distance` (a rounded local-unit copy,
+then a precise metres copy) and two called `Elapsed Time` (equal, one
+int one float, both seconds) — `strava_import.py` reads by position
+within the header for these, not by name alone, to avoid picking the
+wrong one silently. `distance_km` = the precise-metres column ÷ 1000,
+the same metres→km conversion the Garmin path applies (§5).
+`avg_pace_s_per_km` is derived identically to the Garmin path:
+`duration_s / distance_km`, `NULL` when `distance_km` is `0` or absent —
+never a division error, never a fabricated pace.
+
+**Id collision check, as actually implemented.** Before any write, every
+Strava id in the import's scope is checked against existing
+**`source = 'garmin'`** rows only, not against `source = 'strava'` rows.
+Checking against all existing ids indiscriminately would make a second
+run of the same import abort on its own previous output, which would
+violate the "safe to run twice" requirement binding on every ingest path
+(CLAUDE.md rule 4). Any collision with a `source = 'garmin'` id aborts
+loudly before any write, naming the colliding id(s) — proving Garmin's
+and Strava's id namespaces don't collide, exactly as CLAUDE.md rule 4's
+upsert discipline assumes, rather than assuming it.
+
+Live run result (9 Aug 2026): 491 rows imported (2023-05-13..2026-08-07,
+216 running / 125 cycling / 151 other, less the 1 skipped 8 Aug row already
+covered by the Garmin path), re-run confirmed idempotent, zero
+coordinate-shaped keys found in the resulting schema.
+
 ---
 
 ## 1. What this is
@@ -132,7 +225,7 @@ input to our own metrics.
 | 6 | Charts = **ECharts**, interactive on all breakpoints | Native `dataZoom` for the range selector; tap-to-inspect is first-class. One codebase, no static mobile fork. |
 | 7 | **No composite score** of any kind | §3. |
 | 8 | Language = **English** | Matches coach files. |
-| 9 | Strava = **one-time bulk archive import only**, then dropped | Seeds Dec 2025–Aug 2026 history. Account data export, not the API — no subscription, no ToS question. |
+| 9 | Strava = **one-time bulk archive import only**, then dropped | Seeds the full Strava export history (13 May 2023 → 7 Aug 2026, corrected in v1.5 from an earlier "Dec 2025" estimate made before the real export was inspected). Account data export, not the API — no subscription, no ToS question. |
 | 10 | Garmin ingest = `python-garminconnect` | Unofficial but mature. ToS-grey; accepted knowingly. |
 | 11 | **Device-switch date is a hard break** in every series | Amazfit → FR70. Different sensor, different algorithm. Nothing averages across it. |
 | 12 | Migration timing: `daily` now, `sessions`/`weekly`/`benchmarks` at the **Meso 1 boundary (17 Aug)** | Never split a live mesocycle across two systems. |
@@ -329,12 +422,21 @@ the metric's type filter only works if `type` can't silently contain a
 string the filter doesn't match.
 
 **Strava-sourced rows carry structural NULLs, not missing
-measurements.** Strava's export has no running-dynamics data:
-`avg_cadence`, `avg_vertical_oscillation`, `avg_vertical_ratio`, and
-`avg_ground_contact_ms` are NULL on every `source = 'strava'` row, and
-`avg_hr` / `max_hr` may also be NULL. NULL here means the source never
-carried the field, not that it went unmeasured. Any metric consuming
-these columns must handle NULL rather than assume presence.
+measurements — for a mix of two reasons, corrected in v1.5.**
+`avg_vertical_oscillation`, `avg_vertical_ratio`, and
+`avg_ground_contact_ms` are NULL on every `source = 'strava'` row because
+the export genuinely has no such columns. `avg_cadence` is also NULL on
+every `source = 'strava'` row, but not because the field is absent — the
+export does carry an "Average Cadence" column, in Strava's own per-leg
+strides/min convention, never confirmed equivalent to Garmin's
+`summaryDTO.averageRunCadence` (full steps/min, this table's own mapping
+above) that `impact_mechanics` (§7) joins it against across sources. It
+is deliberately not imported rather than risk silently corrupting that
+join. `avg_hr` / `max_hr` may also be NULL, when the export row itself
+leaves them blank. NULL here always means either "the source never
+carried this value" or "carried but not trusted to be comparable," never
+"went unmeasured." Any metric consuming these columns must handle NULL
+rather than assume presence.
 
 **No coordinates. No polyline. No start location.** Not stored, not fetched into
 the output layer.
