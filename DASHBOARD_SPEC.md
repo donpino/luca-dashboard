@@ -1,4 +1,4 @@
-# Training Dashboard — Build Spec v1.6
+# Training Dashboard — Build Spec v1.7
 
 **Athlete:** Luca · **Campaign:** middle-distance, Foundation block → 2032
 **Status:** Phase 0 complete — `daily` table, RLS/grants, and `/log` all
@@ -8,7 +8,9 @@ backfill, the Strava archive import, and `compute/metrics.py` done for
 every metric computable against the current schema; four metrics
 (`easy_band_compliance`, `medio_control`, `aerobic_efficiency`,
 `decoupling`) are implemented as pure functions but have no real data to
-run on yet — see the new `laps` phase in §12. · **Date:** 9 Aug 2026
+run on yet — see the new `laps` phase in §12. Pre-FR70 volume is now
+known to be a floor, not a measurement — see the v1.7 amendment below
+and §5, §7, §8.3. · **Date:** 9 Aug 2026
 
 This document is the contract. It goes in the repo root alongside `CLAUDE.md`.
 Anything not defined here is an open question, not an implementation detail to
@@ -243,6 +245,92 @@ regardless of the conversion question: `impact_mechanics` (§7) joins
 `avg_cadence` to `daily.shin`, and `daily` has no rows before 8 Aug
 2026 (§8.5's `/log` route did not exist yet), so no pre-FR70 cadence
 value has a shin row to join against today.
+
+**Amendments in v1.7 (9 Aug 2026)** — forced by new information from the
+athlete, and cross-checked against `Luca Training Tracker`, the
+athlete's own Airtable base (`Weekly` and `Sessions` tables — spec §5's
+`sessions`/`weekly`, ported to Supabase at Phase 2, 17 Aug).
+
+**Pre-FR70 volume is a floor, not a measurement — binding, added to §7.**
+Before the FR70 (8 Aug 2026), runs were tracked on a phone via Zepp,
+which is unreliable and frequently cut runs short, especially at save
+time. This is a device/tracking failure, not a `strava_import.py` bug —
+confirmed against the athlete's own contemporaneous Sessions notes for
+the week of 27 Jul – 2 Aug 2026: the Sunday long run (2026-08-02) reads
+`distance_km = 6.9713` in the database; the athlete's Sessions note for
+that date, written the same day, says *"Phone GPS + Zepp badly
+under-tracked this run (showed 7km) —
+true distance confirmed 11.04km via wristband backup... 64:45
+elapsed."* The recorded `duration_s` (3861, ≈64:21) matches the true
+64:45 elapsed almost exactly — the truncation cut the **distance**
+tracking specifically, not the clock, which is why the row's implied
+pace (554 s/km) reads as anomalously slow next to every other run that
+week (all 340–360 s/km) rather than just short. The same week's Monday
+medio shows a smaller instance of the identical failure — DB
+`distance_km = 4.786` vs the athlete's same-day note *"Track GPS
+undercounted distance (4.79km shown, true 5km per track laps)."* Every
+other run that week (Tue, Wed, Thu) matches the athlete's own
+reconciled figures closely (within ~1%) — this is not a uniform discount
+applied to every row, it is an uneven, per-run failure mode, exactly as
+the athlete described it, and it cannot be corrected by a formula.
+**Every row with `source = 'strava'` therefore carries an unknown and
+uneven undercount, and every volume metric computed over any range
+ending before 2026-08-08 — `weekly_km`, `ramp_pct`, `rolling_7d_km`,
+`rolling_28d_km` — is a floor on true volume, never a measurement of
+it.** No metric formula changes; this is a data-quality fact about the
+input, stated so it can't be read as more precise than it is.
+
+**§8.3's shin-vs-rolling-km panel — binding rendering requirement, not a
+note.** That panel is, in the site's own words, *"the most important
+chart on the site"* — the periostitis early-warning chart the dashboard
+exists for. Plotting understated pre-8-Aug mileage against real shin
+scores understates the volume the shins were actually carrying when
+they complained, which is backwards for an early-warning signal: it
+would make the shins look more sensitive to volume than they are, not
+less. Any portion of the shin-vs-rolling-km panel before 2026-08-08
+**must** render with a distinct visual treatment marking it as
+understated (e.g. a hatched or desaturated lane, distinct from the
+normal reference-band fill — the specific treatment is a rendering-phase
+decision, not fixed here) and **must not** be used, by that panel or by
+any future feature, to infer a volume-tolerance threshold. This applies
+to the panel only; it does not change `shin_series`'s own definition
+(§7), which already renders `rolling_7d_km` numerically without judging
+it against a band.
+
+**`sessions`/`weekly` accuracy note, added to §5.** For the overlap
+period (20 Jul 2026 onward, when the athlete's own Sessions/Weekly
+logging began — no Airtable record exists before that date), the
+athlete's own recorded weekly volume in `Weekly.Actual km` is more
+accurate than the `activities`-derived `weekly_km` for the same range —
+it is reconciled by the athlete against multiple sources (track laps,
+wristband backups), not solely dependent on phone GPS. Confirmed for
+the two weeks with real data: 20–26 Jul 2026 (`weekly_km` computed
+30.17 km vs Airtable's recorded 30.2 km — negligible gap) and 27 Jul – 2
+Aug 2026 (`weekly_km` computed 30.10 km vs Airtable's recorded 34.4 km —
+the 4.3 km gap accounted for above). §13 adds an open question below on
+what this means for which table pre-FR70 volume metrics should read
+from once `sessions`/`weekly` ports at Phase 2.
+
+**`strava_import.py`'s use of Elapsed Time, not Moving Time, is
+confirmed and recorded as deliberate.** Spot-check: the 6 Jun 2026 run
+reads `duration_s = 2482` (41:22) in the database against the Strava
+app's displayed *moving* time of 41:16 — the two differ because they are
+different fields, not because of a bug. `strava_import.py`'s
+`read_rows()` resolves `elapsed_idx = col_index(header, "Elapsed Time",
+0)` and never reads a "Moving Time" column at all — it is not in
+`READ_COLUMNS`. This is deliberate, not an oversight: **Elapsed Time is
+present and well-defined across the full 2023–2026 export; Moving Time
+depends on each recording device's autopause behaviour, which is exactly
+the kind of cross-device inconsistency the Zepp-era data already has
+enough of.** Elapsed time is always ≥ moving time, so every derived
+`avg_pace_s_per_km` on a `source = 'strava'` row is a conservative
+(slower) pace estimate, never a flattering one — consistent with this
+same amendment's volume-floor framing above: where pre-FR70 data is
+wrong, it is wrong in the cautious direction, not the flattering one.
+v1.5's existing text ("two columns called `Elapsed Time`... both
+seconds") already describes the two same-named columns read for this
+one field (int and float copies of the same elapsed-time value); it does
+not refer to Moving Time, which is a separate, unread column.
 
 ---
 
@@ -493,6 +581,21 @@ carried this value" or "carried but not trusted to be comparable," never
 "went unmeasured." Any metric consuming these columns must handle NULL
 rather than assume presence.
 
+**`distance_km` on `source = 'strava'` rows is a floor, not a
+measurement — added v1.7, binding.** Every Strava-era run was tracked on
+a phone via Zepp, which is unreliable and frequently cut runs short,
+especially at save time — a device/tracking failure upstream of the
+export, not an ingest bug. Confirmed against the athlete's own
+Airtable-recorded ground truth (week of 27 Jul – 2 Aug 2026): the Sunday
+long run's `distance_km` (6.9713) undercounts the athlete's confirmed
+true distance (11.04 km, verified via a wristband backup) by ~37%, while
+the recorded `duration_s` matches the true elapsed time almost exactly —
+the truncation cuts distance tracking specifically, not the clock. The
+same week's other four running days match the athlete's own reconciled
+figures within ~1%. The undercount is real, unknown in size per row,
+and uneven — not a fixed percentage that could be back-corrected by a
+formula. See the v1.7 amendment above and §7's matching note.
+
 **No coordinates. No polyline. No start location.** Not stored, not fetched into
 the output layer.
 
@@ -543,6 +646,18 @@ Existing shape retained: `date` · `week` · `phase` · `session_type` · `purpo
 ### `weekly` / `benchmarks`
 Ported as-is. `weekly.dates` now Mon–Sun. `benchmarks` holds the corrected
 1500 m (23 Sep) and 800 m (26 Sep) dates.
+
+**Added v1.7 — `weekly.actual_km` is more accurate than `activities`-derived
+`weekly_km` for the overlap period.** For 20 Jul 2026 onward (when the
+athlete's own Airtable Sessions/Weekly logging began — no record exists
+before that date), the athlete's recorded `Actual km` is reconciled
+against multiple sources (track laps, wristband backups), not solely
+dependent on the same phone GPS that undercounts `activities.distance_km`
+(§5's `activities` section, this amendment). Confirmed for the two weeks
+with real Airtable data: 20–26 Jul 2026 matches closely (30.17 vs 30.2
+km); 27 Jul – 2 Aug 2026 does not (30.10 vs 34.4 km, gap explained
+above). See §13 for the open question this raises about which table
+pre-FR70 volume metrics should read from.
 
 ---
 
@@ -618,6 +733,17 @@ These are binding. The frontend must not recompute or reinterpret them.
 | `impact_mechanics` | Per run: `avg_cadence`, `avg_vertical_oscillation`, `avg_vertical_ratio`, joined to `daily.shin` at date + 1 and date + 2. |
 | `shin_series` | `daily.shin` joined to `rolling_7d_km` by date. **`NULL` is never coerced to `0`.** A missing day renders as a gap in the step series with a distinct unfilled marker on the date axis — not a value, not a zero. Every panel consuming shin declares its coverage as `n answered / n days in range`. |
 
+**Added v1.7 — floor, not measurement, for any range ending before
+2026-08-08.** `weekly_km`, `ramp_pct`, `rolling_7d_km`, and
+`rolling_28d_km` all sum `activities.distance_km`, which on
+`source = 'strava'` rows carries an unknown, uneven undercount from
+unreliable pre-FR70 phone tracking (§5's `activities` section). No
+formula above changes — this is a caveat on the input, not the
+calculation: every value these four metrics return for a range ending
+before 8 Aug 2026 is a floor on true volume, never a precise measurement,
+and `ramp_pct` specifically may read a smaller ramp than actually
+occurred if either week in the comparison predates 8 Aug 2026.
+
 **Added v1.6 — data shape for the four segment-dependent metrics above.**
 `easy_band_compliance`, `medio_control`, `aerobic_efficiency`, and
 `decoupling` all reference a portion of a run narrower than the whole
@@ -678,6 +804,21 @@ The only thing Luca touches is the `/log` link.
 | Aerobic efficiency trend | Is the engine growing |
 | Impact mechanics vs shin | Does landing change before the shin complains |
 | Strength adherence | Binary, per session |
+
+**Added v1.7 — binding rendering requirement, not a note.** Any portion
+of the shin-vs-rolling-km panel before 2026-08-08 plots `rolling_7d_km`
+built from `source = 'strava'` distances, which §5/§7 record as an
+unknown, uneven floor on true volume (pre-FR70 phone tracking that
+frequently cut runs short). Plotting understated mileage against real
+shin scores on this specific panel is backwards for an early-warning
+chart — it implies the shins tolerated less volume than they actually
+carried, understating true risk rather than overstating it. The pre-8-
+Aug-2026 portion of this panel **must** render with a visual treatment
+distinct from the reference-band fill used elsewhere, marking it as
+understated (the exact treatment — hatching, desaturation, or similar —
+is a rendering-phase decision, not fixed here), and that portion **must
+not** be used, by this panel or any other feature, to infer a
+volume-tolerance threshold.
 
 ### 8.4 Lab — locked by default
 Correlation matrix, weekday effects, bedtime-vs-recovery scatter, habit impact.
@@ -845,6 +986,19 @@ responses* used as test fixtures, not hand-written stand-ins.
    Current answer: keep — it is ~30 MB/year and re-analysis needs it.
 3. Does the check-in generator output Markdown for pasting, or write directly to
    a `check_ins` table the coach reads? v1: Markdown.
+4. *(added v1.7)* `weekly.actual_km` (Airtable-ported, §5) is more
+   accurate than `activities`-derived `weekly_km` for the 20 Jul 2026
+   onward overlap period, since `activities.distance_km` on
+   `source = 'strava'` rows is a confirmed, uneven undercount (§5, §7).
+   Should pre-FR70 volume metrics (`weekly_km`, `ramp_pct`,
+   `rolling_7d_km`, `rolling_28d_km`) read from `sessions`/`weekly`
+   instead of `activities` for dates before 2026-08-08 once that table
+   ports at Phase 2 (17 Aug)? And if so, how does a metric reading from
+   two different tables depending on date reconcile with CLAUDE.md rule
+   3 — "metric definitions live in `compute/metrics.py` only," read
+   until now as one formula, one source table, per metric? Not answered
+   here — flagged for the 17 Aug port, when `sessions`/`weekly` actually
+   exist to read from.
 
 **Resolved in v1.1 and moved out of this list:** null-vs-zero for `shin`
 (§5, §7, §10); `/log` form layout (§8.5); archive/backup location (§4, §11.6).
