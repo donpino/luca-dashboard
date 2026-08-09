@@ -1,0 +1,19 @@
+-- 005_service_role_read_daily.sql
+-- Grants service_role SELECT on daily (DASHBOARD_SPEC.md v1.6, §5) —
+-- discovered writing compute/metrics.py: shin_series (§7) joins
+-- daily.shin against rolling_7d_km, so the compute layer needs read
+-- access to daily. compute/metrics.py is a headless batch job, same as
+-- ingest/sync.py — no interactive Supabase Auth session, so it
+-- authenticates with service_role, same as sync.py (spec v1.4, §6).
+--
+-- 001_daily.sql granted table privileges to authenticated only (the
+-- /log route's role) because service_role had no reader on this table
+-- when it was written. Same two-gate model as CLAUDE.md rule 10 /
+-- migration 004: bypassrls only skips the RLS policy check, it does not
+-- substitute for a SQL GRANT.
+--
+-- SELECT only, deliberately narrower than 004's grant on
+-- biometrics/activities: metrics.py reads daily, it never writes it —
+-- shin stays owned exclusively by the /log route's authenticated-role
+-- upsert path (spec §8.5).
+grant select on table public.daily to service_role;

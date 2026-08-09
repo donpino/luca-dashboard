@@ -1,11 +1,14 @@
-# Training Dashboard — Build Spec v1.5
+# Training Dashboard — Build Spec v1.6
 
 **Athlete:** Luca · **Campaign:** middle-distance, Foundation block → 2032
 **Status:** Phase 0 complete — `daily` table, RLS/grants, and `/log` all
 shipped, in nightly use since 8 Aug. Phase 1 in progress —
 `garmin_client.py`, `biometrics`/`activities` migrations, `sync.py`
-backfill, and the Strava archive import done; `metrics.py` next. ·
-**Date:** 9 Aug 2026
+backfill, the Strava archive import, and `compute/metrics.py` done for
+every metric computable against the current schema; four metrics
+(`easy_band_compliance`, `medio_control`, `aerobic_efficiency`,
+`decoupling`) are implemented as pure functions but have no real data to
+run on yet — see the new `laps` phase in §12. · **Date:** 9 Aug 2026
 
 This document is the contract. It goes in the repo root alongside `CLAUDE.md`.
 Anything not defined here is an open question, not an implementation detail to
@@ -188,6 +191,58 @@ Live run result (9 Aug 2026): 491 rows imported (2023-05-13..2026-08-07,
 216 running / 125 cycling / 151 other, less the 1 skipped 8 Aug row already
 covered by the Garmin path), re-run confirmed idempotent, zero
 coordinate-shaped keys found in the resulting schema.
+
+**Amendments in v1.6 (9 Aug 2026)** — forced by writing and running
+`compute/metrics.py`, the first real implementation of §7: four of the
+nine metrics — `easy_band_compliance`, `medio_control`,
+`aerobic_efficiency`, `decoupling` — turned out to need per-run,
+sub-activity data (a warm-up-excluded steady segment, a first-half/
+second-half split, "the medio segment") that no table stores.
+`activities` holds only whole-run averages; there is no `laps` or
+`streams` table. This is recorded as a deferred schema gap, not a design
+decision to leave these four permanently unusable — see the new `laps`
+phase in §12, and the corresponding row added to §7's table below. Each
+of the four is implemented in `compute/metrics.py` as a pure function
+against the binding definition, operating on caller-supplied per-lap
+segment data (and, for the two that need it, a caller-supplied list of
+already-classified easy/medio runs — that classification is a `sessions`
+concern, out of scope until Phase 2, 17 Aug); today, with no ingest path
+populating that input, all four return the explicit insufficient-data
+signal against the real database, never a guess.
+
+`rhr_baseline`'s table row (§7) previously stated "30-day rolling
+median. Band = ±1 MAD," with no floor on how few points that window may
+contain. Implementing it exposed the gap: at n=1 (the real count as of
+9 Aug 2026, one day post-device-break), MAD=0, which collapses the band
+to a single value and would render every subsequent real day as
+out-of-band — a false alert on a health-adjacent metric, worse than
+rendering nothing. `min_n = 14` days post-device-break is added to the
+definition below; below it, the metric returns insufficient-data. This
+is not the same class as `hrv_baseline`'s existing ≥21-day gate (that one
+comes from Garmin's own HRV Status confidence window, per §5); this one
+exists to keep a near-empty rolling window from masquerading as a
+population statistic, same principle as §3.4 and §8.4's Lab thresholds.
+
+Migration `db/migrations/005_service_role_read_daily.sql` grants
+`service_role` `SELECT` (only — never write) on `daily`: `metrics.py`
+runs headless, same as `sync.py` (§6, v1.4), and `shin_series` (§7)
+requires reading `daily.shin`, which no prior migration granted to that
+role. Same two-gate model as CLAUDE.md rule 10 and migration 004, one
+more role, one more table.
+
+`avg_cadence`'s Strava exclusion (§5, v1.5) is re-affirmed, not
+reversed, but the reasoning was resting on an assumption never labelled
+as such: that Strava's per-leg strides/min and Garmin's full steps/min
+are related by a fixed, known factor (most likely ×2). That factor has
+never been verified against real overlapping data. It could be verified
+by comparing one run's Strava-exported cadence value against that same
+run's cadence as shown natively in the Strava app (or against a Garmin
+recording of comparable effort), and only then backfilled. Recovering
+this historical cadence is separately noted as currently low-value
+regardless of the conversion question: `impact_mechanics` (§7) joins
+`avg_cadence` to `daily.shin`, and `daily` has no rows before 8 Aug
+2026 (§8.5's `/log` route did not exist yet), so no pre-FR70 cadence
+value has a shin row to join against today.
 
 ---
 
@@ -558,10 +613,26 @@ These are binding. The frontend must not recompute or reinterpret them.
 | `medio_control` | Per medio: mean pace over the medio segment vs band [3:50, 4:00]. Sub-3:45 flags as *raced*, per `technique.md`. |
 | `aerobic_efficiency` | Easy runs only: `speed_m_s / avg_hr`, computed on the steady segment (first 10 min excluded). Rising = engine growing. **This is the aerobic-progress marker named in `monthly_assessment.md`.** |
 | `decoupling` | `aerobic_efficiency` second half ÷ first half, per run. Falling = fatigue or heat. |
-| `rhr_baseline` | 30-day rolling median. Band = ±1 MAD. **Never spans the device break.** |
+| `rhr_baseline` | 30-day rolling median. Band = ±1 MAD. **Never spans the device break.** **`min_n = 14` days post-device-break** (added v1.6) — below that, a near-empty window collapses the MAD band to near-zero width and would falsely flag every subsequent day as out-of-band; the metric returns insufficient-data below `min_n` instead. |
 | `hrv_baseline` | 7-day mean vs 30-day mean, plus Garmin's own HRV Status when available. Requires ≥ 21 days on FR70 before rendering at all. |
 | `impact_mechanics` | Per run: `avg_cadence`, `avg_vertical_oscillation`, `avg_vertical_ratio`, joined to `daily.shin` at date + 1 and date + 2. |
 | `shin_series` | `daily.shin` joined to `rolling_7d_km` by date. **`NULL` is never coerced to `0`.** A missing day renders as a gap in the step series with a distinct unfilled marker on the date axis — not a value, not a zero. Every panel consuming shin declares its coverage as `n answered / n days in range`. |
+
+**Added v1.6 — data shape for the four segment-dependent metrics above.**
+`easy_band_compliance`, `medio_control`, `aerobic_efficiency`, and
+`decoupling` all reference a portion of a run narrower than the whole
+activity (a warm-up-excluded steady segment, a first-half/second-half
+split, "the medio segment"). No table stores per-run splits or streams
+today — see the new `laps` phase, §12. Each is implemented in
+`compute/metrics.py` as a pure function against its binding definition
+above, taking already-segmented per-lap data (time-in-run, pace or
+speed, HR) as an argument, plus — for `easy_band_compliance` and
+`medio_control` — a caller-supplied list of runs already classified as
+easy/medio (a `sessions`-driven classification, out of scope until Phase
+2). The function bodies are correct and tested against hand-checked
+synthetic segment data; run against the real database today, with no
+ingest path yet producing that input, all four return the explicit
+insufficient-data signal.
 
 **Explicitly not computed:** ACWR / load ratio (mathematical coupling between
 numerator and denominator produces correlations that aren't there; also needs
@@ -747,7 +818,8 @@ same information, survives colour-blindness, and doesn't editorialise.
 |---|---|---|
 | **0** | Now | Supabase project ✅, `daily` table + RLS + grants ✅, `/log` route ⏳. Logging starts the night `/log` ships. |
 | **1** | Watch arrived (8 Aug) | Repo scaffold, Actions pipeline, `garmin_client.py` against the real API, `biometrics`/`activities` migration + RLS + grants, `metrics.py`, backfill, device-break marker, Week + Block off `sessions` data, Today goes live |
-| **2** | 17 Aug — Meso 1 boundary | Port `sessions`/`weekly`/`benchmarks` from Airtable |
+| **1.5** *(added v1.6)* | Not yet scheduled — blocks 4 metrics below | New `laps` table + ingest path. Added v1.6, discovered writing `compute/metrics.py`: `easy_band_compliance`, `medio_control`, `aerobic_efficiency`, and `decoupling` (§7) each need per-run split/segment data (warm-up-excluded steady segment, first-half/second-half, "the medio segment") that no table stores today. Garmin's `get_activity(id).splitSummaries` already carries per-lap distance/duration/pace/HR and contains no coordinate-shaped keys (confirmed against the real fixture, `ingest/fixtures/garmin_activity_summary_23902996105.json`) — a `laps` table sourced from it is the actual fix, not a metric-definition change. Until this phase ships, those four metrics are implemented as correct pure functions with no real data to run on (§7). |
+| **2** | 17 Aug — Meso 1 boundary | Port `sessions`/`weekly`/`benchmarks` from Airtable. `easy_band_compliance`/`medio_control` additionally need Phase 1.5 before they render against real data — classifying a run as easy/medio is a `sessions` concern, but the segment data itself comes from `laps`. |
 | **3** | +21 days on FR70 | HRV/RHR baselines established, bands become real, autoregulation panel on |
 | **4** | Oct, post-benchmark | Campaign page — trajectory vs floor/target/stretch |
 | **5** | 2027 | Lab unlocks, panel by panel, as each `min_n` is crossed |
