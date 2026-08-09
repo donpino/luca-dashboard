@@ -46,7 +46,8 @@
     "bodyBatteryDynamicFeedbackEvent": {
       "eventTimestampGmt": "2026-08-08T19:35:00.0",
       "bodyBatteryLevel": "HIGH",
-      "feedbackShortType": "SLEEP_PREPARATION_RECOVERING_AND_INTENSIVE_EXERCISE"
+      "feedbackShortType": "SLEEP_PREPARATION_RECOVERING_AND_INTENSIVE_EXERCISE",
+      "feedbackLongType": "SLEEP_PREPARATION_RECOVERING_AND_INTENSIVE_EXERCISE"
     },
     "bodyBatteryActivityEvent": [
       {

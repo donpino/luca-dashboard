@@ -81,6 +81,7 @@
     "aerobicTrainingEffect": 3.700000047683716,
     "anaerobicTrainingEffect": 0.0,
     "normPower": 283.0,
+    "avgVerticalOscillation": 9.26999969482422,
     "avgGroundContactTime": 257.6000061035156,
     "avgStrideLength": 109.8199951171875,
     "vO2MaxValue": 49.0,
@@ -121,6 +122,7 @@
         "avgStepFrequency": 170.0,
         "avgStepLength": 1.098199951171875,
         "verticalRatio": 8.4399995803833,
+        "verticalOscillation": 9.26999969482422,
         "avgGroundContactTime": 257.6000061035156
       },
       {
@@ -139,6 +141,7 @@
         "avgStepFrequency": 170.0,
         "avgStepLength": 1.098199951171875,
         "verticalRatio": 8.4399995803833,
+        "verticalOscillation": 9.26999969482422,
         "avgGroundContactTime": 257.6000061035156
       }
     ],
@@ -390,6 +393,7 @@
     "aerobicTrainingEffect": 2.5999999046325684,
     "anaerobicTrainingEffect": 0.0,
     "normPower": 283.0,
+    "avgVerticalOscillation": 9.35999984741211,
     "avgGroundContactTime": 260.0,
     "avgStrideLength": 109.70999755859376,
     "vO2MaxValue": 46.0,
@@ -430,6 +434,7 @@
         "avgStepFrequency": 167.296875,
         "avgStepLength": 1.0970999755859376,
         "verticalRatio": 8.529999732971191,
+        "verticalOscillation": 9.35999984741211,
         "avgGroundContactTime": 260.0
       },
       {
@@ -448,6 +453,7 @@
         "avgStepFrequency": 167.296875,
         "avgStepLength": 1.0970999755859376,
         "verticalRatio": 8.529999732971191,
+        "verticalOscillation": 9.35999984741211,
         "avgGroundContactTime": 260.0
       }
     ],

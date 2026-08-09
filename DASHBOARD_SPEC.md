@@ -1,4 +1,4 @@
-# Training Dashboard — Build Spec v1.3
+# Training Dashboard — Build Spec v1.4
 
 **Athlete:** Luca · **Campaign:** middle-distance, Foundation block → 2032
 **Status:** Phase 0 in progress — `daily` table applied, `/log` route next · **Date:** 9 Aug 2026
@@ -45,6 +45,52 @@ claiming the Strava import writes the `'amazfit'` value is deleted, since
 the Strava import writes `activities` only and carries no RHR/HRV/sleep
 data, so `biometrics` has no pre-FR70 source at all and the series begins
 8 Aug 2026 (§5). Migration: `db/migrations/003_activity_source.sql`.
+
+**Amendments in v1.4 (9 Aug 2026)** — forced by writing and running
+`ingest/sync.py`, the first real backfill (8 Aug 2026 only): `ingest/sync.py`
+is recorded as the single sync entrypoint for both the manual backfill and
+the future scheduled job — there is no separate backfill script. It takes
+`--from`/`--to` (inclusive ISO dates), defaulting to a trailing 3-day window
+ending yesterday when both are omitted, and applies two clamps, each logged
+when it fires: `--to` is never today or later — today's steps/stress/body
+battery are mid-day values, so a row written now would stay permanently
+half-recorded, and a `--to` of today or later clamps to yesterday instead;
+`--from` is never earlier than the 8 Aug 2026 Garmin source boundary already
+binding in §6 — an earlier `--from` clamps up to it rather than writing
+pre-boundary rows (§6). A non-wear rule is added to the biometrics write
+path: a row is written only if at least one of `sleep_total_min` / `rhr` /
+`hrv_overnight` came back non-null; Garmin returns structural zeros
+(`totalSteps: 0`, etc.) for a day the watch wasn't worn, and a zero-filled
+row would be indistinguishable from a real quiet day in every downstream
+panel — worse than no row, since rule 12's null-vs-zero discipline exists
+precisely to keep an unanswered day from reading as a measured one. An
+all-null day is skipped entirely, not written and not logged as an error
+(§5, §6). `activities.raw_archive_path` is written `NULL` on every row from
+this commit — archiving to the private Storage `archive/` bucket (§4,
+§11.6) is deferred to a later commit, and this is recorded as a deferred
+implementation gap, not a decision to leave the column permanently unused
+(§5; the bucket does not exist yet — confirmed empty on the live project
+during this commit). Ingest authenticates to Supabase with the
+`service_role` key, not the `authenticated`-role RLS path `/log` uses,
+because it is a headless batch job with no interactive Supabase Auth
+session to hold the owner's `auth.uid()`; `service_role` bypasses RLS
+entirely, so **RLS is not the safety boundary on the ingest write path** —
+the binding constraints there are the date-window clamps above, the source
+boundary, and the upsert-only rule (§6), same as CLAUDE.md rule 4. The key
+lives only in `ingest/.env` (gitignored) locally and moves to GitHub Actions
+secrets when the sync workflow ships (§4, CLAUDE.md rule 8) — it exists
+nowhere else, and never in `web/` or any client bundle. Migration:
+`db/migrations/004_service_role_grants.sql`, discovered necessary when the
+first live run failed with "permission denied for table biometrics":
+`bypassrls` only skips the RLS policy check, it does not substitute for a
+SQL `GRANT`, and `002_biometrics_activities.sql` granted table privileges to
+`authenticated` only — `service_role` didn't exist as a writer when that
+migration was written. This is CLAUDE.md rule 10's two-gate model
+(grants and RLS are independent) applying to a second role. Q1 check
+(9 Aug 2026): `biometrics.device`'s type name was verified directly against
+`002_biometrics_activities.sql` — it is the named Postgres enum
+`public.device_type`, matching what v1.3's correction paragraph above
+already called it. No correction needed.
 
 ---
 
@@ -217,6 +263,11 @@ site — the one chart the dashboard exists for. Therefore:
 
 `device` exists so the switch break is queryable, not hard-coded.
 
+**Non-wear rule (v1.4).** A row is written only if at least one of
+`sleep_total_min` / `rhr` / `hrv_overnight` came back non-null for that
+date — see §6. A day where all three are null is skipped, not written as
+a row of nulls and structural zeros.
+
 **Field mapping, confirmed against a real FR70 pull (v1.2, 9 Aug 2026)** —
 binding on the ingest layer, not an implementation detail to re-derive:
 
@@ -309,6 +360,12 @@ by any column below:
 | `elevation_gain_m` | `summaryDTO.elevationGain` | |
 | `session_id`, `raw_archive_path` | not API fields | ingest-generated: joined by date, and the storage path written after archiving |
 
+**`raw_archive_path` is `NULL` on every row as of v1.4** — archiving to the
+private Storage `archive/` bucket (§4, §11.6) is deferred to a later
+commit; the bucket does not exist yet (confirmed empty on the live project,
+9 Aug 2026). This is a deferred implementation gap, not a decision to leave
+the column permanently unused.
+
 **Explicitly excluded from `activities`** — Training Effect
 (`aerobicTrainingEffect`, `anaerobicTrainingEffect`, `trainingEffectLabel`),
 VO2max (`vO2MaxValue`), and `activityTrainingLoad` are model outputs, same
@@ -345,6 +402,30 @@ what duplicate rows did to the Airtable base, this is enforced with a
 specifically the conflict target is `ON CONFLICT (id) DO UPDATE`, not
 `date` — a day can hold more than one activity, so Garmin's own numeric
 `activityId` is the natural key there, not the date.
+
+**`ingest/sync.py` is the single entrypoint (v1.4)** — both the manual
+backfill and the future scheduled job run through it; there is no separate
+backfill script. `--from`/`--to` are inclusive ISO dates; omitting both
+defaults to a trailing 3-day window ending yesterday. Two clamps apply,
+both logged when they fire: a `--to` of today or later clamps to
+yesterday, because today's steps/stress/body-battery are still mid-day
+values and a row written now would stay permanently half-recorded; a
+`--from` earlier than the 8 Aug 2026 source boundary below clamps up to
+it, rather than writing pre-boundary rows. Ingest authenticates to
+Supabase with the `service_role` key (bypasses RLS) rather than the
+`authenticated`-role path `/log` uses, since it is a headless job with no
+owner login session — RLS is therefore not the safety boundary on this
+path, the clamps and the upsert-only rule above are (CLAUDE.md rule 8,
+rule 4).
+
+**Non-wear rule (v1.4).** A `biometrics` row is written for a date only if
+at least one of `sleep_total_min` / `rhr` / `hrv_overnight` came back
+non-null. Garmin returns structural zeros (`totalSteps: 0`, etc.) for a
+day the watch wasn't worn, and a zero-filled row would be indistinguishable
+from a real quiet day in every downstream panel — the same null-vs-zero
+failure mode rule 12 exists to prevent, applied to an entire row rather
+than a single field. A day where all three are null is skipped entirely:
+no row, and not logged as an error.
 
 **Source boundary — binding, enforced as a date filter in code, not in
 the schema.** The Strava archive import writes `activities` rows dated

@@ -25,6 +25,8 @@
   },
   "metadataDTO": {
     "isOriginal": true,
+    "deviceApplicationInstallationId": 1014567,
+    "agentApplicationInstallationId": null,
     "agentString": null,
     "fileFormat": {
       "formatId": 7,
@@ -96,6 +98,7 @@
     "totalWork": 185.44064228810365,
     "groundContactTime": 257.6000061035156,
     "strideLength": 109.8199951171875,
+    "verticalOscillation": 9.26999969482422,
     "trainingEffect": 3.700000047683716,
     "anaerobicTrainingEffect": 0.0,
     "aerobicTrainingEffectMessage": "IMPROVING_LACTATE_THRESHOLD_12",
@@ -134,6 +137,7 @@
       "normalizedPower": 283.0,
       "groundContactTime": 257.6000061035156,
       "strideLength": 109.8199951171875,
+      "verticalOscillation": 9.26999969482422,
       "verticalRatio": 8.4399995803833,
       "totalExerciseReps": 0,
       "avgVerticalSpeed": 0.0,
@@ -166,6 +170,7 @@
       "normalizedPower": 283.0,
       "groundContactTime": 257.6000061035156,
       "strideLength": 109.8199951171875,
+      "verticalOscillation": 9.26999969482422,
       "verticalRatio": 8.4399995803833,
       "totalExerciseReps": 0,
       "avgVerticalSpeed": 0.0,

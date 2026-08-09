@@ -80,10 +80,15 @@
   "abnormalHeartRateAlertsCount": null,
   "averageSpo2": null,
   "lowestSpo2": null,
+  "latestSpo2": null,
+  "latestSpo2ReadingTimeGmt": null,
+  "latestSpo2ReadingTimeLocal": null,
   "averageMonitoringEnvironmentAltitude": 217.0,
   "restingCaloriesFromActivity": 99.0,
   "avgWakingRespirationValue": 13.0,
   "highestRespirationValue": 21.0,
   "lowestRespirationValue": 6.0,
+  "latestRespirationValue": 13.0,
+  "latestRespirationTimeGMT": "2026-08-07T21:58:00.0",
   "respirationAlgorithmVersion": 100
 }

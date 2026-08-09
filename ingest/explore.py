@@ -47,13 +47,35 @@ FIXTURES_DIR = REPO_ROOT / "ingest" / "fixtures"
 # `serial`/`guid` are included defensively though nothing matched them in
 # this pull. Real biometric values (HR streams, HRV readings, timestamps)
 # are deliberately NOT matched here — the site publishes those by design.
-PRIVATE_KEY_RE = re.compile(
-    r"lat|lon|coord|polyline"
+#
+# `lat`/`lon` are matched as whole camelCase tokens, not substrings: a bare
+# substring check on "lat"/"lon" false-positives on ordinary words that
+# happen to contain those three letters — `verticalOscillation` (osci-LAT-
+# ion), `cumulativeAscent` (cumu-LAT-ive), `deviceApplicationInstallationId`
+# (instal-LAT-ion), `feedbackLongType` (LON-g) — and silently dropped
+# `avg_vertical_oscillation` from the committed fixture even though
+# spec §5's mapping (`summaryDTO.verticalOscillation`) was correct all
+# along. Real coordinate keys (`lat`, `lon`, `maxLat`, `minLat`, `maxLon`,
+# `minLon`, `startLatitude`, `endLongitude`, ...) are always their own
+# camelCase token, so tokenizing and matching whole tokens catches every
+# real one found in a full walk of the raw archive while leaving unrelated
+# words alone.
+PRIVATE_KEY_SUBSTRINGS = re.compile(
+    r"coord|polyline"
     r"|location|activityname"
     r"|fullname|displayname|profileimage|userinfodto|activityimages"
     r"|userprofile|ownerid|deviceid|serial|uuid|guid|unitid",
     re.IGNORECASE,
 )
+PRIVATE_KEY_TOKENS = {"lat", "lon", "latitude", "longitude"}
+CAMEL_TOKEN_RE = re.compile(r"[A-Z]?[a-z0-9]+|[A-Z]+(?=[A-Z]|$|[0-9])")
+
+
+def is_private_key(key: str) -> bool:
+    if PRIVATE_KEY_SUBSTRINGS.search(key):
+        return True
+    tokens = {t.lower() for t in CAMEL_TOKEN_RE.findall(key)}
+    return bool(tokens & PRIVATE_KEY_TOKENS)
 
 # `metricDescriptors` + `activityDetailMetrics` (from get_activity_details)
 # together encode the full GPS polyline as an unlabeled per-point time
@@ -71,7 +93,7 @@ def strip_coordinates(obj):
         return {
             k: strip_coordinates(v)
             for k, v in obj.items()
-            if not PRIVATE_KEY_RE.search(k) and k not in DETAIL_METRIC_KEYS
+            if not is_private_key(k) and k not in DETAIL_METRIC_KEYS
         }
     if isinstance(obj, list):
         return [strip_coordinates(v) for v in obj]
