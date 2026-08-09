@@ -1,7 +1,11 @@
 # Training Dashboard — Build Spec v1.4
 
 **Athlete:** Luca · **Campaign:** middle-distance, Foundation block → 2032
-**Status:** Phase 0 in progress — `daily` table applied, `/log` route next · **Date:** 9 Aug 2026
+**Status:** Phase 0 complete — `daily` table, RLS/grants, and `/log` all
+shipped, in nightly use since 8 Aug. Phase 1 in progress —
+`garmin_client.py`, `biometrics`/`activities` migrations, and `sync.py`
+backfill done; `metrics.py` and the Strava archive import next. ·
+**Date:** 9 Aug 2026
 
 This document is the contract. It goes in the repo root alongside `CLAUDE.md`.
 Anything not defined here is an open question, not an implementation detail to
