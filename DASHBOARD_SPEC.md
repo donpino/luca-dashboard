@@ -1,4 +1,4 @@
-# Training Dashboard — Build Spec v1.11
+# Training Dashboard — Build Spec v1.12
 
 **Athlete:** Luca · **Campaign:** middle-distance, Foundation block → 2032
 **Status:** Phase 1 complete — `daily` table, RLS/grants, `/log`,
@@ -10,9 +10,11 @@ metric computable against the current schema, and `.github/workflows/sync.yml`
 `decoupling`) are implemented as pure functions but have no real data to
 run on yet — see the `laps` phase in §12. Pre-FR70 volume is now
 known to be a floor, not a measurement — see the v1.7 amendment below
-and §5, §7, §8.3. Frontend deploy in progress — Cloudflare Workers with
-static assets, behind Cloudflare Access, see the v1.11 amendment below.
-· **Date:** 9 Aug 2026
+and §5, §7, §8.3. Frontend is deployed and gated — Cloudflare Workers
+with static assets, live at the production `workers.dev` hostname,
+behind a verified Cloudflare Access policy, Preview URLs disabled —
+see the v1.11 and v1.12 amendments below.
+· **Date:** 10 Aug 2026
 
 This document is the contract. It goes in the repo root alongside `CLAUDE.md`.
 Anything not defined here is an open question, not an implementation detail to
@@ -724,6 +726,54 @@ unmatched path should 404, not silently serve `index.html`.
 
 `VITE_BASE_PATH` stays unset, unchanged by this amendment — see §4's
 closing paragraph, updated below.
+
+---
+
+**Amendments in v1.12 (10 Aug 2026)** — the Workers deploy went live and
+Cloudflare Access was verified against it; four items, none reversing a
+decision above.
+
+**1. First successful deploy.** Build #b3486589 (commit `7216a92`)
+deployed the assets-only Worker described in the v1.11 amendment. The
+site now serves live at the production hostname
+`luca-dashboard.luc-panetto.workers.dev`.
+
+**2. Cloudflare Access verified.** The Access policy on the production
+hostname was checked today from a logged-out browser and confirmed to
+gate the site as intended: Include → Emails → a single address,
+one-time-PIN as the sole identity provider (`Accept all available
+identity providers` off), session duration 1 month. This confirms §2
+decision 3 and §11 rule 7 as implemented, not merely configured.
+
+**3. Preview URLs disabled — forced by a second public hostname the
+deploy created unasked.** Deploying created a second hostname,
+`*-luca-dashboard.luc-panetto.workers.dev`, serving the same site,
+because `preview_urls` was absent from `web/wrangler.jsonc` and
+defaults to enabled; the deploy log warned about exactly this. That
+hostname sits behind a separate Access application Cloudflare
+generated automatically, carrying its own shared default policy — not
+the one written for this project and verified in item 2 above. This
+repo only ever deploys from `main` (CLAUDE.md); there is no preview
+workflow for a preview hostname to serve, so the second hostname was a
+second gate to keep correct for no benefit. `preview_urls: false` is
+added to `web/wrangler.jsonc` (§2 decision 3's code block, above) to
+remove the hostname at the config level rather than rely on an Access
+policy to guard it. `workers_dev` stays unset (enabled) — that setting
+controls the production `workers.dev` hostname verified in item 2, not
+the preview one, and disabling it would take the live site down.
+
+**4. Access's Audience tag and JWKs values are not used anywhere in
+this repo.** Those exist to let a Worker's own script validate a
+`Cf-Access-Jwt-Assertion` header on incoming requests. This is an
+assets-only Worker (v1.11 item 2 — no `main`, no script), so there is
+no code path that could ever check that header. Access enforcement
+happens entirely at Cloudflare's edge before a request reaches the
+asset handler; nothing downstream needs to re-verify it.
+
+Everything else is unchanged: **Cloudflare Access is not a substitute
+for Supabase RLS** (v1.9 binding rule 3, §11 rule 7). Access gates the
+deployed site; RLS and the `authenticated`-role grants remain the sole
+write boundary for `/log`, exactly as before this amendment.
 
 ---
 
