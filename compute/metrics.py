@@ -49,6 +49,21 @@ HRV_BASELINE_MIN_DAYS = 21  # §7 hrv_baseline, "≥ 21 days on FR70"
 HRV_MEAN_SHORT_WINDOW_DAYS = 7
 HRV_MEAN_LONG_WINDOW_DAYS = 30
 
+SHIN_IN_BAND_MAX = 0  # shin <= this is "in band" (solid marker), §10 — added spec v1.x amendment.
+# 0 is the only in-band value: full_plan.md's autoregulation table treats
+# any shin whisper as an amber trigger and the athlete's standing protocol
+# acts on any reading above 0. A 0–1 split would render a shin of 1 as a
+# solid in-band marker on the primary periostitis early-warning chart
+# (§8.3), hiding the first signal the chart exists to surface — the
+# conservative direction on an early-warning chart is to flag sooner.
+
+UNDERSTATED_VOLUME_CUTOFF = date(2026, 8, 8)  # §7/§8.3 v1.7 amendment.
+# rolling_7d_km for any date before this reads on pre-FR70 Strava/Zepp
+# tracking, confirmed as an unknown, uneven floor on true volume, never a
+# measurement — plotting it against real shin scores understates the
+# volume the shins actually carried, so any point in this range is
+# flagged rather than rendered as an ordinary measurement.
+
 RUNNING = "running"  # CLAUDE.md rule 6 — cycling excluded from every running total
 
 
@@ -400,12 +415,25 @@ def impact_mechanics(activities: list[dict], daily: list[dict]) -> list[dict]:
     return results
 
 
+def _shin_band(shin_value: int | None) -> str:
+    """§10's third marker state: "in_band" (solid), "out_of_band" (hollow),
+    or "not_answered" (absent). SHIN_IN_BAND_MAX defines the threshold —
+    see its comment above for why 0 is the only in-band value."""
+    if shin_value is None:
+        return "not_answered"
+    return "in_band" if shin_value <= SHIN_IN_BAND_MAX else "out_of_band"
+
+
 def shin_series(activities: list[dict], daily: list[dict], start: date, end: date) -> dict:
     """daily.shin joined to rolling_7d_km, one entry per day in [start, end].
 
     Every day in range appears, including days with no daily row — those
     render with shin=None, never 0 (§5's null rule, §7, §10's third
-    marker state). Coverage is reported as answered/total, per §7.
+    marker state). Coverage is reported as answered/total, per §7. Each
+    entry also carries `band` (§10's in_band/out_of_band/not_answered
+    marker state, never derived by the frontend — CLAUDE.md rule 3) and
+    `understated_volume` (§8.3's v1.7 pre-FR70 floor-not-measurement
+    flag), so the render layer never has to hardcode either threshold.
     """
     shin_by_date = _shin_by_date(daily)
     series = []
@@ -420,6 +448,8 @@ def shin_series(activities: list[dict], daily: list[dict], start: date, end: dat
                 "date": day,
                 "shin": shin_value,
                 "rolling_7d_km": rolling_7d_km(activities, day),
+                "band": _shin_band(shin_value),
+                "understated_volume": day < UNDERSTATED_VOLUME_CUTOFF,
             }
         )
         day += timedelta(days=1)

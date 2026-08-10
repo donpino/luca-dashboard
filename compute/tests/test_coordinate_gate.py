@@ -8,7 +8,9 @@ this test proves both directions: the real field survives, a real
 coordinate key gets caught.
 """
 
-from metrics import assert_no_private_keys, find_private_keys, is_private_key
+from datetime import date
+
+from metrics import assert_no_private_keys, find_private_keys, is_private_key, shin_series
 
 
 def test_vertical_oscillation_survives():
@@ -62,3 +64,13 @@ def test_find_private_keys_catches_a_leaked_coordinate_nested_in_output():
         assert False, "expected ValueError for a coordinate-shaped key"
     except ValueError:
         pass
+
+
+def test_shin_series_output_shape_passes_the_gate():
+    """web/public/data/shin_series.json's real assembled shape (§8.3) —
+    proves the gate holds on the actual output, not just a hand-picked
+    clean dict."""
+    daily = [{"date": "2026-08-08", "shin": 1}]
+    output = shin_series([], daily, date(2026, 8, 8), date(2026, 8, 9))
+    assert find_private_keys(output) == []
+    assert_no_private_keys(output)  # must not raise

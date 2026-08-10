@@ -57,6 +57,37 @@ def test_shin_series_zero_is_not_coerced_from_or_to_none():
     assert all(row["shin"] == 0 for row in result["series"])
 
 
+def test_shin_series_band_classification_hand_checked():
+    """§10's third marker state: shin=0 is in_band, 1-3 is out_of_band,
+    no daily row is not_answered — never derived by the frontend."""
+    daily = [
+        _daily("2026-08-08", 0),
+        _daily("2026-08-09", 1),
+        _daily("2026-08-10", 2),
+        _daily("2026-08-11", 3),
+        # 2026-08-12 has no row at all
+    ]
+    result = shin_series([], daily, date(2026, 8, 8), date(2026, 8, 12))
+    band_by_date = {row["date"]: row["band"] for row in result["series"]}
+    assert band_by_date[date(2026, 8, 8)] == "in_band"
+    assert band_by_date[date(2026, 8, 9)] == "out_of_band"
+    assert band_by_date[date(2026, 8, 10)] == "out_of_band"
+    assert band_by_date[date(2026, 8, 11)] == "out_of_band"
+    assert band_by_date[date(2026, 8, 12)] == "not_answered"
+
+
+def test_shin_series_understated_volume_flag_hand_checked():
+    """§8.3/v1.7: any point before 2026-08-08 is a floor, not a
+    measurement, and must be marked so the render layer never has to
+    hardcode the cutoff date itself."""
+    result = shin_series([], [], date(2026, 8, 6), date(2026, 8, 9))
+    understated_by_date = {row["date"]: row["understated_volume"] for row in result["series"]}
+    assert understated_by_date[date(2026, 8, 6)] is True
+    assert understated_by_date[date(2026, 8, 7)] is True
+    assert understated_by_date[date(2026, 8, 8)] is False  # the cutoff itself is not understated
+    assert understated_by_date[date(2026, 8, 9)] is False
+
+
 def test_impact_mechanics_joins_shin_plus1_plus2_preserving_null():
     activities = [_run("2026-08-08", avg_cadence=170, avg_vertical_oscillation=9.3, avg_vertical_ratio=8.4)]
     daily = [_daily("2026-08-10", 2)]  # date+2 answered; date+1 (08-09) has no row

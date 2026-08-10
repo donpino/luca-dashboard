@@ -1,4 +1,4 @@
-# Training Dashboard — Build Spec v1.12
+# Training Dashboard — Build Spec v1.13
 
 **Athlete:** Luca · **Campaign:** middle-distance, Foundation block → 2032
 **Status:** Phase 1 complete — `daily` table, RLS/grants, `/log`,
@@ -13,7 +13,9 @@ known to be a floor, not a measurement — see the v1.7 amendment below
 and §5, §7, §8.3. Frontend is deployed and gated — Cloudflare Workers
 with static assets, live at the production `workers.dev` hostname,
 behind a verified Cloudflare Access policy, Preview URLs disabled —
-see the v1.11 and v1.12 amendments below.
+see the v1.11 and v1.12 amendments below. `compute/build_data.py` now
+writes the first real output artifact, `web/public/data/shin_series.json`
+— see the v1.13 amendment below; the §8.3 panel itself is not built yet.
 · **Date:** 10 Aug 2026
 
 This document is the contract. It goes in the repo root alongside `CLAUDE.md`.
@@ -777,6 +779,40 @@ write boundary for `/log`, exactly as before this amendment.
 
 ---
 
+**Amendments in v1.13 (10 Aug 2026)** — forced by writing
+`compute/build_data.py`, the first real output artifact
+(`web/public/data/shin_series.json`, backing §8.3's shin-vs-rolling-km
+panel). Two decisions this required, neither previously in this file:
+
+**1. The shin "in band" threshold** — added to §7's `shin_series` row
+and §10's marker-state paragraph. `shin = 0` is `in_band`; 1–3 is
+`out_of_band`. Full reasoning recorded in both places above, not
+repeated here.
+
+**2. `compute/metrics.py` stays pure; the Supabase-fetch-and-write
+driver is a separate file, `compute/build_data.py`.** §4's architecture
+diagram labels the compute stage "metrics.py — strips coordinates,
+writes public/data/*.json," and the v1.6 amendment's grants note says
+"`metrics.py` runs headless" — both read, literally, as `metrics.py`
+itself doing the fetch and the write. The code already didn't work that
+way: `metrics.py`'s own module docstring states its functions are pure
+("No network, no filesystem, no Supabase client") and names
+`compute/report_live.py` as where driver logic belongs, precisely so
+CLAUDE.md rule 3 — "metric definitions live in `compute/metrics.py`
+only" — is never blurred by fetch/write plumbing. `report_live.py`
+itself is documented as a one-off, read-only acceptance script, not the
+production writer, so it was left alone; `build_data.py` is the new
+production driver, importing `shin_series` and `assert_no_private_keys`
+from `metrics.py` and doing nothing else metric-shaped. §4's diagram
+label and the v1.6 grants note both describe "the compute stage" by its
+best-known file, the way `sync.py` stands in for all of ingest above
+it — not a literal claim that no other file in `compute/` may touch a
+socket. Existing convention won over the diagram's literal wording;
+flagged here rather than silently resolved, per this file's own
+opening instruction.
+
+---
+
 ## 1. What this is
 
 A private-by-design training dashboard — public source repo, privately-hosted
@@ -1225,7 +1261,7 @@ These are binding. The frontend must not recompute or reinterpret them.
 | `rhr_baseline` | 30-day rolling median. Band = ±1 MAD. **Never spans the device break.** **`min_n = 14` days post-device-break** (added v1.6) — below that, a near-empty window collapses the MAD band to near-zero width and would falsely flag every subsequent day as out-of-band; the metric returns insufficient-data below `min_n` instead. |
 | `hrv_baseline` | 7-day mean vs 30-day mean, plus Garmin's own HRV Status when available. Requires ≥ 21 days on FR70 before rendering at all. |
 | `impact_mechanics` | Per run: `avg_cadence`, `avg_vertical_oscillation`, `avg_vertical_ratio`, joined to `daily.shin` at date + 1 and date + 2. |
-| `shin_series` | `daily.shin` joined to `rolling_7d_km` by date. **`NULL` is never coerced to `0`.** A missing day renders as a gap in the step series with a distinct unfilled marker on the date axis — not a value, not a zero. Every panel consuming shin declares its coverage as `n answered / n days in range`. |
+| `shin_series` | `daily.shin` joined to `rolling_7d_km` by date. **`NULL` is never coerced to `0`.** A missing day renders as a gap in the step series with a distinct unfilled marker on the date axis — not a value, not a zero. Every panel consuming shin declares its coverage as `n answered / n days in range`. **Added v1.13 — the §10 band threshold for shin's marker state: `shin = 0` is `in_band`; `shin` 1–3 is `out_of_band`; no row is `not_answered`.** Each entry also carries `understated_volume` (v1.7's pre-8-Aug-2026 floor-not-measurement flag, §8.3). Both are computed by `shin_series` itself, not derived by the frontend (CLAUDE.md rule 3). |
 
 **Added v1.7 — floor, not measurement, for any range ending before
 2026-08-08.** `weekly_km`, `ramp_pct`, `rolling_7d_km`, and
@@ -1439,6 +1475,18 @@ hollow = out of band, **absent = not answered** — hairline outline, no fill,
 sitting on the axis. The primary periostitis panel (§8.3) must be readable as
 three distinct states without colour. A day with no answer must never look like
 a day with no pain.
+
+**Added v1.13 — "in band" for shin, binding.** Unlike RHR/HRV/pace, `shin`
+has no naturally continuous band — it's a 0–3 ordinal. `shin = 0` is the
+only in-band (solid marker) value; 1–3 is out of band (hollow). A 0–1
+split was considered and rejected: `full_plan.md`'s autoregulation table
+treats any shin whisper as an amber trigger, and the athlete's standing
+protocol acts on any reading above 0, so a 0–1 split would render a shin
+of 1 as a solid in-band marker on the primary periostitis early-warning
+chart — hiding the first signal the chart exists to surface. The
+conservative direction on an early-warning chart is to flag sooner, not
+later. This does not replace the raw 0–3 ordinal, which still drives the
+step series' height (§7) — the band only drives marker fill state.
 
 **Red/green is not used for in/out.** Red is a judgement about the athlete;
 "outside the band" is information about a session. Fill-vs-hollow carries the
