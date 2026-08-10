@@ -1,4 +1,4 @@
-# Training Dashboard — Build Spec v1.15
+# Training Dashboard — Build Spec v1.16
 
 **Athlete:** Luca · **Campaign:** middle-distance, Foundation block → 2032
 **Status:** Phase 1 complete — `daily` table, RLS/grants, `/log`,
@@ -15,8 +15,11 @@ with static assets, live at the production `workers.dev` hostname,
 behind a verified Cloudflare Access policy, Preview URLs disabled —
 see the v1.11 and v1.12 amendments below.
 `compute/build_data.py` writes the first real output artifact,
-`web/public/data/shin_series.json` — v1.13; the §8.3 panel itself is not
-built yet. **Deployment now runs in GitHub Actions**
+`web/public/data/shin_series.json` — v1.13. **The §8.3 shin panel is now
+built and live on the index route** — ECharts, dual axis, the three
+marker states, the v1.7 understated-volume hatch, and a minimum-data
+caption below one rolling window — see the v1.16 amendment below.
+**Deployment now runs in GitHub Actions**
 (`.github/workflows/deploy.yml`: compute → build → deploy, gated on the
 compute test suite) instead of Cloudflare's Git integration — see the
 v1.14 amendment below. Four new Actions secrets are required and do not
@@ -965,6 +968,60 @@ for a different one.
 
 ---
 
+**Amendments in v1.16 (10 Aug 2026)** — the §8.3 shin-vs-rolling-km panel
+is built and rendered on the index route (`web/src/panels/`), reading
+`web/public/data/shin_series.json` (v1.13) and never recomputing `band`
+or `understated_volume` (CLAUDE.md rule 3). ECharts (CLAUDE.md's stated
+stack) is added as a `web/` dependency for this reason — the render
+logic itself lives in a pure option-builder, `shinVolumeChart.ts`, tested
+the same way `compute/metrics.py` is (CLAUDE.md "no metric ships
+untested," extended to this render layer). Two rendering-phase decisions
+this required, explicitly left open by §8.3 and §9:
+
+**1. Understated-volume treatment (§8.3's binding v1.7 requirement) —
+a diagonal hatch, not desaturation or a solid tint.** Rendered as an
+inline-SVG pattern fill (a small tiled diagonal line, at 35% opacity)
+under the `rolling_7d_km` line, present only where `understated_volume`
+is `true` for that day — read directly off the JSON, so the 8-Aug-2026
+cutoff is never hardcoded in the frontend. Chosen over desaturation
+because desaturation has nothing to desaturate here: the measured
+portion of this line carries no colour treatment to begin with (no
+continuous reference band exists for `rolling_7d_km` in §7, so there is
+no lane fill on this chart at all outside the hatch) — a hatch reads as
+"uncertain measurement" on its own, where a partial-opacity tint would
+be easy to misread as the reference-band lane fill (§10) used elsewhere
+in the system, which is exactly what the v1.7 requirement says this
+must be distinct from.
+
+**2. Minimum-data state for a near-empty range — a caption, not a
+lock.** Below `MIN_RANGE_DAYS_FOR_TREND = 7` days of range (one rolling
+window), the panel adds a muted, non-judgemental caption under the
+coverage line: `early days — range is shorter than one rolling 7-day
+window (n days)`. The chart itself still renders in full — this is not
+Lab-panel gating (§8.4, CLAUDE.md rule 7's `min_n` lock is explicitly
+scoped to Lab panels only) — because the panel makes no population-level
+claim at any range length; it plots raw daily readings, which are true
+regardless of n. The caption exists only so a two-point line spanning
+the panel's full width is never mistaken for a multi-week trend. Seven
+was chosen, not measured: it is the width of the metric being plotted
+(`rolling_7d_km`) rather than an invented statistical threshold, so a
+range shorter than its own window is definitionally too short to show
+the window doing anything.
+
+Also settled, not requiring a spec amendment because §10 already
+specifies the encoding directly: the three shin marker states are a
+solid dot (in band), a hollow ring of the same colour (out of band, §10
+never uses colour for in/out), and a hairline unfilled ring sitting at
+0 on the shin axis (not answered) — drawn as a separate scatter series
+from the shin step line so a not-answered day is a real gap
+(`connectNulls: false`) in the line, never a value.
+
+Scope held to §8.3's one panel, per the task that produced this
+amendment: no nav, no client router, no global range selector (§9,
+still deferred to Phase 2 per v1.10), and no Today/Week/Lab pages.
+
+---
+
 ## 1. What this is
 
 A private-by-design training dashboard — public source repo, privately-hosted
@@ -1514,10 +1571,11 @@ chart — it implies the shins tolerated less volume than they actually
 carried, understating true risk rather than overstating it. The pre-8-
 Aug-2026 portion of this panel **must** render with a visual treatment
 distinct from the reference-band fill used elsewhere, marking it as
-understated (the exact treatment — hatching, desaturation, or similar —
-is a rendering-phase decision, not fixed here), and that portion **must
-not** be used, by this panel or any other feature, to infer a
-volume-tolerance threshold.
+understated, and that portion **must not** be used, by this panel or any
+other feature, to infer a volume-tolerance threshold. **Chosen in v1.16:
+a diagonal hatch fill**, read from the JSON's `understated_volume` flag
+day-by-day rather than a hardcoded cutoff — see the v1.16 amendment for
+the reasoning.
 
 ### 8.4 Lab — locked by default
 Correlation matrix, weekday effects, bedtime-vs-recovery scatter, habit impact.
