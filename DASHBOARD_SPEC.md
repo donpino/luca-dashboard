@@ -1,4 +1,4 @@
-# Training Dashboard — Build Spec v1.17
+# Training Dashboard — Build Spec v1.18
 
 **Athlete:** Luca · **Campaign:** middle-distance, Foundation block → 2032
 **Status:** Phase 1 complete — `daily` table, RLS/grants, `/log`,
@@ -30,6 +30,12 @@ step, on a Wrangler major-version mismatch — see the v1.15 amendment
 below. **Two faults found on the §8.3 panel's first live view are fixed**
 — the `rolling_7d_km` line had no legend entry, and the default range
 was 2-3 days instead of a stated window — see the v1.17 amendment below.
+**§9's global range selector is now built for the §8.3 panel**
+(`7d · 30d · 90d · 6m · 1y · all`), plus a hover tooltip and a fix for
+not-answered-marker crowding at wide ranges — three more faults the
+athlete found on live view. §9's per-range mean/delta and the
+tap-to-inspect detail drawer remain explicitly deferred — see the v1.18
+amendment below and §13.
 · **Date:** 10 Aug 2026
 
 This document is the contract. It goes in the repo root alongside `CLAUDE.md`.
@@ -1108,6 +1114,88 @@ marker states and coverage line already carry.
 
 ---
 
+**Amendments in v1.18 (10 Aug 2026)** — three more faults found on the
+§8.3 panel's live view, reported by the athlete: no range selector, no
+hover tooltip, and not-answered markers crowding the axis. Scope held to
+§8.3's one panel, same as v1.16/v1.17 (no nav, no client router, no
+Today/Week/Lab pages).
+
+**1. §9's global range selector, built for this panel —
+`7d · 30d · 90d · 6m · 1y · all`.** Architecture: `compute/build_data.py`
+now emits `shin_series.json` **once**, at the widest range the selector
+will ever need, and the range buttons filter that one series by date
+client-side — never a second fetch, never a frontend recompute of
+`rolling_7d_km`/`band`/`understated_volume`/coverage (CLAUDE.md rule 3).
+**Widest emitted range: `DATA_START = 2023-05-13` (the first `activities`
+row, the Strava-import backfill boundary, §6) through `today`** — "all"
+has to reach back that far, so nothing shorter would serve every button.
+Per-range `start` dates and `coverage_by_range` (answered/total for each
+of the six windows) are computed once in `build_data.py` and shipped in
+the JSON alongside the full series; the frontend reads both as-is and
+filters `series` by `date >= range_start[key]`, a selection, not a
+derivation. Month-based ranges (`6m`, `1y`) shift by calendar months
+(`_shift_months`), clamped to `DATA_START` so a range nominally wider
+than the emitted series never points before the first plotted day.
+Default range on load: `90d`, unchanged from v1.17.
+
+**2. Hover tooltip — axis-triggered, added to `shinVolumeChart.ts`.**
+Shows, for the hovered day: the date, `rolling_7d_km`, and shin state —
+the raw 0–3 value when answered, an explicit "not answered" when null
+(§5's null rule, CLAUDE.md rule 12 — never blank, never a bare 0 standing
+in for unanswered), plus an understated-volume flag on days that carry
+it. Looked up by index in the same `series` array already plotted, never
+recomputed. §9's "no inline annotations, ever" is a rule about the chart
+itself, not about on-demand hover inspection — this does not weaken it.
+**§9's tap-to-inspect detail drawer is a separate, still-deferred
+feature** — it shows sessions/journal/habits, none of which exist until
+Phase 2 (§8.4's join rule, §12) — recorded as an explicit open item
+below so it is not later assumed shipped alongside the tooltip.
+
+**3. Not-answered marker crowding — fixed by density, not encoding.**
+The reported case: 90 days, 2 answered, 88 full-size hairline rings
+shoulder-to-shoulder swamping the two real readings. §10's three-state
+requirement stands unweakened — a not-answered day must still be
+visibly distinct without colour — so the fix scales the *existing*
+hairline-ring encoding's symbol size and opacity down as the point count
+grows, floored well above invisible, rather than changing what the ring
+means or dropping any of them. Full size/opacity below ~14 points (few
+enough that individual rings stay legible as distinct dates); above
+that, both scale by `1/sqrt(n)` against that reference, so 90 points
+(the reported case) renders at roughly 40% size/opacity — a faint
+dotted baseline, not 88 competing circles — and "all" (~1,100+ points)
+floors out to a near-invisible baseline without disappearing. The
+answered shin markers (in-band/out-of-band) are unaffected — the
+complaint was specifically that the *unanswered* ring dominated, not
+that answered markers were too small.
+
+**Also: the "7-day" vs range legibility fix the task called out
+separately, not a numbered fault but read as a contradiction by the
+athlete.** The panel title still names the metric (`rolling_7d_km`
+itself is not renamed) but a new subtitle states the two are
+independent — "the line is a trailing 7-day sum ... the range below
+picks how much time is shown, not the width of that sum" — and the km
+axis label changes from `km` to `km (7d)` as a second, quieter cue. A
+third, incidental fix fell out of widening the emitted range to
+multiple years: the x-axis date formatter drops the year (`MM-DD`) only
+while the plotted range stays inside one calendar year; once a range
+crosses a year boundary (`6m` near a rollover, `1y`, `all`) it switches
+to `YY-MM-DD`, since `MM-DD` alone repeats across different years with
+nothing to disambiguate them — not part of the reported faults, but a
+direct, necessary consequence of this amendment's own widened range.
+
+**Deferred, added as open items (§13) — not improvised into this
+commit, per the task:**
+- §9's per-range **mean and delta vs the previous equivalent window**.
+  Applies to `rolling_7d_km` only — §7 forbids any mean of `shin` — and
+  needs its own precomputed values per range (mean, plus the prior
+  window's mean for the delta), which `build_data.py` does not compute
+  yet. Improvising it into the render layer would mean the frontend
+  deriving a mean itself, a direct CLAUDE.md rule 3 violation.
+- §9's **tap-to-inspect detail drawer** (day/week → sessions, journal,
+  habits). Blocked on Phase 2 data that does not exist yet (§8.4, §12).
+
+---
+
 ## 1. What this is
 
 A private-by-design training dashboard — public source repo, privately-hosted
@@ -1739,13 +1827,22 @@ tap gets filled for two weeks and then never again.
 
 ## 9. Interaction
 
-- **Global range selector:** `7d · 30d · 90d · 6m · 1y · all`. Each range
-  displays the **mean for that window and the delta vs the previous equivalent
-  window**. This is the genuinely useful part of the reference design.
-- **Charts stay clean.** No inline annotations, ever.
+- **Global range selector:** `7d · 30d · 90d · 6m · 1y · all`. **Built for the
+  §8.3 panel in v1.18** — see that amendment for the architecture (emitted
+  once at the widest range, filtered client-side, per-range coverage
+  precomputed in `build_data.py`). Each range should display the **mean for
+  that window and the delta vs the previous equivalent window** — this is
+  the genuinely useful part of the reference design, but it is **not yet
+  built** (v1.18 deferred it explicitly; §13). Applies to `rolling_7d_km`
+  only — §7 forbids any mean of `shin`.
+- **Charts stay clean.** No inline annotations, ever. **A hover tooltip is
+  not an inline annotation** (v1.18) — this rule bans annotations baked
+  into the chart itself, not on-demand inspection triggered by the athlete.
 - **Tap/click a day or week** → a single shared detail drawer opens **above** the
   chart, showing that day's sessions, journal, habits, shin, and biometrics.
-  One drawer component, reused everywhere.
+  One drawer component, reused everywhere. **Not yet built anywhere** (§13)
+  — do not assume it shipped alongside the v1.18 hover tooltip, which is a
+  separate, narrower feature (date/km/shin only, no sessions/journal/habits).
 - **Responsive:** identical panels, reflowed to one column below 768 px with
   fixed chart heights. Phone lands on Today; Week and Block assume tablet or
   desktop but must remain usable on phone.
@@ -1896,6 +1993,20 @@ responses* used as test fixtures, not hand-written stand-ins.
    login, re-seed `GARMIN_TOKEN_SEED`) is mandatory, not optional, since a
    fresh login inside the workflow will fail immediately. Confirm next
    time a fresh local login happens, and record the answer here.
+
+6. *(added v1.18)* §9's per-range mean and delta-vs-previous-window for
+   `rolling_7d_km` — the range selector itself shipped in v1.18, but the
+   mean/delta display did not. It needs its own precomputed values per
+   range (the window's mean, plus the prior equivalent window's mean for
+   the delta), added to `build_data.py`'s `coverage_by_range`-style
+   per-range output alongside the existing counts. Not answered here —
+   flagged so it isn't silently skipped when this panel is next touched.
+
+7. *(added v1.18)* §9's tap-to-inspect detail drawer (day/week → sessions,
+   journal, habits, shin, biometrics). Blocked on `sessions`/`weekly`
+   porting at Phase 2 (§8.4, §12) — those tables don't exist yet, so the
+   drawer has nothing to show for two of its five fields. Revisit once
+   Phase 2 lands.
 
 **Resolved in v1.1 and moved out of this list:** null-vs-zero for `shin`
 (§5, §7, §10); `/log` form layout (§8.5); archive/backup location (§4, §11.6).

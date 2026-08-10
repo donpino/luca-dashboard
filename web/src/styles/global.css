@@ -382,7 +382,42 @@ textarea {
 .panel__title {
   font-size: 15px;
   font-weight: 600;
+  margin: 0 0 4px;
+}
+
+.panel__subtitle {
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--muted);
   margin: 0 0 12px;
+}
+
+/* ---- range selector (§9) ---- */
+
+.range-selector {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 12px;
+}
+
+.range-selector__btn {
+  min-height: 32px;
+  padding: 0 12px;
+  background: transparent;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  color: var(--muted);
+  font-family: 'IBM Plex Mono', ui-monospace, monospace;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.range-selector__btn--selected {
+  background: var(--azzurro);
+  border-color: var(--azzurro);
+  color: var(--ink);
+  font-weight: 600;
 }
 
 /* Fixed height at every viewport (§9 quality floor: "usable on a phone

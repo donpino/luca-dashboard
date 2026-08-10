@@ -21,6 +21,7 @@ the output aborts the write rather than shipping it.
 
 from __future__ import annotations
 
+import calendar
 import json
 import os
 import sys
@@ -73,27 +74,74 @@ def _write_json(path: Path, payload: dict) -> None:
     path.write_text(output_json)
 
 
-# Trailing window shown on the §8.3 shin panel — DASHBOARD_SPEC.md v1.17.
-# 90 days: long enough to show the pre-8-Aug-2026 period (so the v1.7
-# understated-volume hatch and the volume line's shape are actually
-# visible) without becoming unreadable at the full multi-year history.
-RANGE_DAYS = 90
+# Widest window the §9 range selector will ever need — DASHBOARD_SPEC.md
+# v1.18. "all" reaches back to 13 May 2023, the first `activities` row
+# (the Strava-import backfill boundary, §6) — emitting shin_series() once
+# at this width and letting the selector filter the already-computed
+# series by date client-side (§9) means every range button reads from the
+# one fetched JSON, never a second request and never a frontend recompute
+# of rolling_7d_km/band/understated_volume/coverage (CLAUDE.md rule 3).
+DATA_START = date(2023, 5, 13)
+
+# §9's global range selector, scoped to the §8.3 panel for now (v1.18).
+RANGE_OPTIONS = ("7d", "30d", "90d", "6m", "1y", "all")
+DEFAULT_RANGE = "90d"  # unchanged from v1.17's fixed-window fix
+
+_RANGE_DAY_COUNTS = {"7d": 7, "30d": 30, "90d": 90}
+_RANGE_MONTH_COUNTS = {"6m": 6, "1y": 12}
 
 
-def _default_range(today: date) -> tuple[date, date]:
-    """Trailing RANGE_DAYS window ending at `today` — the caller's own
-    current-date argument, the freshest point this build can represent.
-    Previously `start` was derived from `daily`'s own minimum date, which
-    produced a 2-3 day range once `daily` existed (it only holds rows
-    from 8 Aug 2026 onward) instead of the intended fixed window."""
-    return today - timedelta(days=RANGE_DAYS - 1), today
+def _shift_months(d: date, months: int) -> date:
+    """`d` shifted back `months` calendar months, clamping the day to the
+    target month's length (e.g. 31 Aug − 6mo → 28/29 Feb). No dateutil
+    dependency — this is the one place month arithmetic is needed."""
+    month_index = d.month - 1 - months
+    year = d.year + month_index // 12
+    month = month_index % 12 + 1
+    last_day = calendar.monthrange(year, month)[1]
+    return date(year, month, min(d.day, last_day))
+
+
+def _range_start(key: str, today: date, floor: date) -> date:
+    """Start date for one §9 selectable range, clamped to `floor` (the
+    widest date this build ever emits, `DATA_START`) so a range longer
+    than the emitted series never points before the first plotted day."""
+    if key == "all":
+        start = floor
+    elif key in _RANGE_DAY_COUNTS:
+        start = today - timedelta(days=_RANGE_DAY_COUNTS[key] - 1)
+    elif key in _RANGE_MONTH_COUNTS:
+        start = _shift_months(today, _RANGE_MONTH_COUNTS[key])
+    else:
+        raise ValueError(f"unknown range: {key}")
+    return max(start, floor)
+
+
+def _range_starts(today: date, floor: date) -> dict[str, date]:
+    return {key: _range_start(key, today, floor) for key in RANGE_OPTIONS}
+
+
+def _range_coverage(series: list[dict], start: date, end: date) -> dict:
+    """answered/total for one §9 range window, counted from the
+    already-computed `series` — never recomputed (CLAUDE.md rule 3).
+    Each entry's `date` is still a `date` object here, pre-JSON-encode."""
+    window = [row for row in series if start <= row["date"] <= end]
+    answered = sum(1 for row in window if row["shin"] is not None)
+    return {"answered": answered, "total": len(window)}
 
 
 def build_shin_series(db, today: date) -> dict:
     daily = fetch_all(db, "daily", "date,shin")
     activities = fetch_all(db, "activities", "date,type,distance_km")
-    start, end = _default_range(today)
-    return shin_series(activities, daily, start, end)
+    payload = shin_series(activities, daily, DATA_START, today)
+    starts = _range_starts(today, DATA_START)
+    payload["range_options"] = list(RANGE_OPTIONS)
+    payload["default_range"] = DEFAULT_RANGE
+    payload["range_start"] = starts
+    payload["coverage_by_range"] = {
+        key: _range_coverage(payload["series"], starts[key], today) for key in RANGE_OPTIONS
+    }
+    return payload
 
 
 def main():

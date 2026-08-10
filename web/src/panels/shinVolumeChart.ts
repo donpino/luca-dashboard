@@ -18,6 +18,7 @@ const AZZURRO = '#3E8FD6'
 const TEXT = '#E6EAF0'
 const MUTED = '#8794A6'
 const LINE = '#232B38'
+const SURFACE = '#141922'
 
 // v1.7's binding understated-volume treatment (§8.3), chosen here as a
 // diagonal-hatch fill (an inline SVG tile, not a solid colour) so it
@@ -69,17 +70,80 @@ export function minimumDataNote(coverage: ShinSeriesResponse['coverage']): strin
   return `early days — range is shorter than one rolling 7-day window (${coverage.total} day${coverage.total === 1 ? '' : 's'})`
 }
 
-function formatAxisDate(iso: string): string {
-  // "MM-DD" — IBM Plex Mono figures, no year (§10: mono for all figures).
-  return iso.slice(5)
+// "MM-DD" — IBM Plex Mono figures, no year (§10: mono for all figures) —
+// unless the plotted range crosses a calendar year boundary (possible
+// now that §9's selector can reach "6m"/"1y"/"all", v1.18), where the
+// same "MM-DD" repeats across different years with nothing to tell them
+// apart. `YY-MM-DD` disambiguates only when the range actually needs it.
+function formatAxisDate(iso: string, showYear: boolean): string {
+  return showYear ? iso.slice(2) : iso.slice(5)
+}
+
+// Not-answered-marker crowding fix (v1.18): the reported fault was 88
+// hairline rings at 90 days with 2 answered — full-size, full-opacity
+// rings already crowd the baseline at that range, so "one trailing
+// window" (90) is not a usable "still fine" threshold; it's the
+// motivating bad case. §10's three-state requirement stands (a
+// not-answered day must stay visibly distinct without colour), so the
+// fix is density, not encoding: symbol size and opacity both shrink,
+// floored well above invisible, once the point count passes roughly two
+// weeks — few enough days that individual rings are still legible as
+// distinct dates, not yet a crowd. Scaled by 1/sqrt(n) so the row's
+// total visual "ink" grows roughly with the square root of the ring
+// count rather than linearly — at 90 points (the reported case) this
+// puts rings at ~40% size/opacity, reading as a faint dotted baseline
+// rather than 88 competing circles; at "all" (~3 years) it floors out
+// as a near-invisible baseline rather than disappearing entirely.
+const NOT_ANSWERED_BASE_SIZE = 7
+const NOT_ANSWERED_BASE_OPACITY = 1
+const NOT_ANSWERED_DENSITY_REFERENCE = 14
+
+function notAnsweredVisualScale(pointCount: number): { size: number; opacity: number } {
+  if (pointCount <= NOT_ANSWERED_DENSITY_REFERENCE) {
+    return { size: NOT_ANSWERED_BASE_SIZE, opacity: NOT_ANSWERED_BASE_OPACITY }
+  }
+  const scale = Math.sqrt(NOT_ANSWERED_DENSITY_REFERENCE / pointCount)
+  return {
+    size: Math.max(2, NOT_ANSWERED_BASE_SIZE * scale),
+    opacity: Math.max(0.25, scale),
+  }
+}
+
+// Axis-triggered hover tooltip (§9 — "on-demand inspection" is not the
+// "no inline annotations" rule, which bans annotations baked into the
+// chart itself). Looks the hovered day up by index in the same `series`
+// array already plotted — never recomputes shin/km/understated_volume,
+// just reads and formats them (CLAUDE.md rule 3).
+function tooltipFormatter(series: ShinSeriesDay[]) {
+  return (paramsRaw: unknown): string => {
+    const params = Array.isArray(paramsRaw) ? paramsRaw : [paramsRaw]
+    const first = params[0] as { dataIndex?: number } | undefined
+    const idx = first?.dataIndex
+    if (idx === undefined) return ''
+    const d = series[idx]
+    if (!d) return ''
+    // §5's null rule / CLAUDE.md rule 12: raw 0-3 when answered, an
+    // explicit "not answered" when null — never blank, never 0.
+    const shinText = d.shin === null ? 'not answered' : String(d.shin)
+    const lines = [
+      `<strong>${d.date}</strong>`,
+      `rolling 7d km: ${d.rolling_7d_km.toFixed(1)}`,
+      `shin: ${shinText}`,
+    ]
+    if (d.understated_volume) {
+      lines.push('volume floor, not measurement (pre-FR70)')
+    }
+    return lines.join('<br/>')
+  }
 }
 
 export function buildShinVolumeOption(
-  data: ShinSeriesResponse,
+  series: ShinSeriesDay[],
   opts: { reducedMotion: boolean } = { reducedMotion: false },
 ): EChartsOption {
-  const { series } = data
   const categories = series.map((d) => d.date)
+  const spansMultipleYears =
+    series.length > 0 && series[0].date.slice(0, 4) !== series[series.length - 1].date.slice(0, 4)
 
   const kmData = series.map((d) => d.rolling_7d_km)
 
@@ -106,24 +170,40 @@ export function buildShinVolumeOption(
   // rule). Sits at 0 on the shin axis ("on the axis"), hairline outline,
   // no fill — distinct from a solid in-band 0 at the same position.
   const notAnsweredData = series.map((d) => (d.band === 'not_answered' ? 0 : null))
+  const notAnsweredVisual = notAnsweredVisualScale(series.length)
 
   return {
     animation: !opts.reducedMotion,
     backgroundColor: 'transparent',
     textStyle: { fontFamily: 'IBM Plex Mono, ui-monospace, monospace', color: TEXT },
     grid: { left: 48, right: 48, top: 24, bottom: 40 },
+    tooltip: {
+      trigger: 'axis',
+      confine: true,
+      backgroundColor: SURFACE,
+      borderColor: LINE,
+      borderWidth: 1,
+      padding: 10,
+      textStyle: { color: TEXT, fontFamily: 'IBM Plex Mono, ui-monospace, monospace', fontSize: 12 },
+      axisPointer: { type: 'line', lineStyle: { color: LINE } },
+      formatter: tooltipFormatter(series),
+    },
     xAxis: {
       type: 'category',
       data: categories,
       axisLine: { lineStyle: { color: LINE } },
-      axisLabel: { color: MUTED, formatter: formatAxisDate },
+      axisLabel: { color: MUTED, formatter: (iso: string) => formatAxisDate(iso, spansMultipleYears) },
       axisTick: { show: false },
     },
     yAxis: [
       {
-        // rolling_7d_km — continuous, left axis.
+        // rolling_7d_km — continuous, left axis. "(7d)" disambiguates the
+        // metric's own trailing window from the §9 range being viewed,
+        // which can be much wider — the panel title says the same thing
+        // in words (v1.18; the athlete read the two as contradictory
+        // before this label existed).
         type: 'value',
-        name: 'km',
+        name: 'km (7d)',
         nameTextStyle: { color: MUTED },
         axisLine: { show: true, lineStyle: { color: LINE } },
         axisLabel: { color: MUTED },
@@ -189,9 +269,14 @@ export function buildShinVolumeOption(
         type: 'scatter',
         yAxisIndex: 1,
         data: notAnsweredData,
-        symbolSize: 9,
+        symbolSize: notAnsweredVisual.size,
         z: 4,
-        itemStyle: { color: 'transparent', borderColor: MUTED, borderWidth: 1 },
+        itemStyle: {
+          color: 'transparent',
+          borderColor: MUTED,
+          borderWidth: 1,
+          opacity: notAnsweredVisual.opacity,
+        },
       },
     ],
   }

@@ -1,13 +1,17 @@
 // §8.3's "most important chart on the site" — shin vs rolling-7-day-km.
-// This component only fetches and draws; every number and every state
-// (band, understated_volume) was decided in compute/metrics.py and
-// shipped in the JSON (CLAUDE.md rule 3 — the frontend never
-// aggregates, derives, or recomputes).
+// This component only fetches, filters by the selected §9 range, and
+// draws; every number and every state (band, understated_volume,
+// range_start, coverage_by_range) was decided in compute/build_data.py /
+// compute/metrics.py and shipped in the JSON (CLAUDE.md rule 3 — the
+// frontend never aggregates, derives, or recomputes). Filtering the
+// already-computed series to a date window is a client-side *selection*,
+// not a derivation — see DASHBOARD_SPEC.md's v1.18 amendment.
 
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import * as echarts from 'echarts'
 import { buildShinVolumeOption, coverageText, minimumDataNote } from './shinVolumeChart'
-import type { ShinSeriesResponse } from './shinSeries'
+import type { RangeKey, ShinSeriesResponse } from './shinSeries'
+import RangeSelector from '../components/RangeSelector'
 
 type LoadState =
   | { status: 'loading' }
@@ -16,6 +20,7 @@ type LoadState =
 
 export default function ShinVolumePanel() {
   const [state, setState] = useState<LoadState>({ status: 'loading' })
+  const [selectedRange, setSelectedRange] = useState<RangeKey | null>(null)
   const chartRef = useRef<HTMLDivElement | null>(null)
 
   useEffect(() => {
@@ -36,12 +41,26 @@ export default function ShinVolumePanel() {
     }
   }, [])
 
+  const data = state.status === 'ready' ? state.data : null
+  const effectiveRange: RangeKey | null = data ? (selectedRange ?? data.default_range) : null
+
+  // §9's range selector: filter the one already-computed series by date
+  // (compute/build_data.py emitted it once, at the widest range the
+  // selector will ever need — CLAUDE.md rule 3). ISO date strings sort
+  // lexically the same as chronologically, so a string comparison is all
+  // filtering needs.
+  const filteredSeries = useMemo(() => {
+    if (!data || !effectiveRange) return []
+    const start = data.range_start[effectiveRange]
+    return data.series.filter((d) => d.date >= start)
+  }, [data, effectiveRange])
+
   useEffect(() => {
-    if (state.status !== 'ready' || !chartRef.current) return
+    if (!chartRef.current || filteredSeries.length === 0) return
 
     const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
     const chart = echarts.init(chartRef.current)
-    chart.setOption(buildShinVolumeOption(state.data, { reducedMotion }))
+    chart.setOption(buildShinVolumeOption(filteredSeries, { reducedMotion }))
 
     const resize = () => chart.resize()
     window.addEventListener('resize', resize)
@@ -49,23 +68,35 @@ export default function ShinVolumePanel() {
       window.removeEventListener('resize', resize)
       chart.dispose()
     }
-  }, [state])
+  }, [filteredSeries])
+
+  const coverage = data && effectiveRange ? data.coverage_by_range[effectiveRange] : null
 
   return (
     <section className="panel" aria-label="Shin score over 7-day rolling km">
       <h2 className="panel__title">Shin vs rolling 7-day km</h2>
+      <p className="panel__subtitle">
+        The line is a trailing 7-day sum — always 7 days wide, wherever it sits. The range below
+        picks how much time is shown, not the width of that sum.
+      </p>
 
       {state.status === 'loading' && <p className="status-text status-text--muted">Loading…</p>}
       {state.status === 'error' && (
         <p className="status-text status-text--error">Couldn't load shin_series.json.</p>
       )}
 
-      {state.status === 'ready' && (
+      {data && effectiveRange && (
         <>
-          <div className="panel__chart" ref={chartRef} role="img" aria-label="Shin score plotted against rolling 7-day kilometres" />
-          <p className="panel__coverage mono">{coverageText(state.data.coverage)}</p>
-          {minimumDataNote(state.data.coverage) && (
-            <p className="panel__note">{minimumDataNote(state.data.coverage)}</p>
+          <RangeSelector options={data.range_options} selected={effectiveRange} onSelect={setSelectedRange} />
+          <div
+            className="panel__chart"
+            ref={chartRef}
+            role="img"
+            aria-label="Shin score plotted against rolling 7-day kilometres"
+          />
+          {coverage && <p className="panel__coverage mono">{coverageText(coverage)}</p>}
+          {coverage && minimumDataNote(coverage) && (
+            <p className="panel__note">{minimumDataNote(coverage)}</p>
           )}
           <ul className="panel__legend">
             <li>

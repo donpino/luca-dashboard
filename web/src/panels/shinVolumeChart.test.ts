@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { buildShinVolumeOption, coverageText, minimumDataNote } from './shinVolumeChart'
-import type { ShinSeriesDay, ShinSeriesResponse } from './shinSeries'
+import type { ShinSeriesDay } from './shinSeries'
 
 function day(overrides: Partial<ShinSeriesDay>): ShinSeriesDay {
   return {
@@ -11,11 +11,6 @@ function day(overrides: Partial<ShinSeriesDay>): ShinSeriesDay {
     understated_volume: false,
     ...overrides,
   }
-}
-
-function response(series: ShinSeriesDay[]): ShinSeriesResponse {
-  const answered = series.filter((d) => d.shin !== null).length
-  return { series, coverage: { answered, total: series.length } }
 }
 
 describe('coverageText', () => {
@@ -46,15 +41,15 @@ describe('minimumDataNote', () => {
 })
 
 describe('buildShinVolumeOption — shin marker states (§10, three states without colour)', () => {
-  const data = response([
+  const series = [
     day({ date: '2026-08-08', shin: 0, band: 'in_band' }),
     day({ date: '2026-08-09', shin: 2, band: 'out_of_band' }),
     day({ date: '2026-08-10', shin: null, band: 'not_answered' }),
-  ])
-  const option = buildShinVolumeOption(data)
-  const shinSeries = option.series as Array<Record<string, unknown>>
-  const shinLine = shinSeries.find((s) => s.id === 'shin')!
-  const notAnswered = shinSeries.find((s) => s.id === 'shin-not-answered')!
+  ]
+  const option = buildShinVolumeOption(series)
+  const optionSeries = option.series as Array<Record<string, unknown>>
+  const shinLine = optionSeries.find((s) => s.id === 'shin')!
+  const notAnswered = optionSeries.find((s) => s.id === 'shin-not-answered')!
 
   it('renders in_band (shin=0) as a solid (filled) marker', () => {
     const points = shinLine.data as Array<{ value: number; itemStyle: Record<string, unknown> } | null>
@@ -92,11 +87,11 @@ describe('buildShinVolumeOption — shin marker states (§10, three states witho
 
 describe('buildShinVolumeOption — rolling_7d_km line', () => {
   it('always plots a value, never a gap — rolling_7d_km is never null (§7)', () => {
-    const data = response([
+    const series = [
       day({ date: '2026-08-08', rolling_7d_km: 12.4 }),
       day({ date: '2026-08-09', rolling_7d_km: 15.0 }),
-    ])
-    const option = buildShinVolumeOption(data)
+    ]
+    const option = buildShinVolumeOption(series)
     const km = (option.series as Array<Record<string, unknown>>).find((s) => s.id === 'rolling-7d-km')!
     expect(km.data).toEqual([12.4, 15.0])
   })
@@ -104,12 +99,12 @@ describe('buildShinVolumeOption — rolling_7d_km line', () => {
 
 describe('buildShinVolumeOption — understated-volume treatment (§8.3 v1.7, binding)', () => {
   it('only fills the hatched area where understated_volume is true, reading the flag as-is', () => {
-    const data = response([
+    const series = [
       day({ date: '2026-08-06', rolling_7d_km: 10, understated_volume: true }),
       day({ date: '2026-08-07', rolling_7d_km: 11, understated_volume: true }),
       day({ date: '2026-08-08', rolling_7d_km: 12, understated_volume: false }),
-    ])
-    const option = buildShinVolumeOption(data)
+    ]
+    const option = buildShinVolumeOption(series)
     const hatch = (option.series as Array<Record<string, unknown>>).find((s) => s.id === 'understated-volume')!
     expect(hatch.data).toEqual([10, 11, null])
     const areaStyle = hatch.areaStyle as Record<string, unknown>
@@ -118,17 +113,110 @@ describe('buildShinVolumeOption — understated-volume treatment (§8.3 v1.7, bi
   })
 
   it('never hardcodes the cutoff date — a flag flipped in the fixture flips the render', () => {
-    const flippedEarly = response([day({ date: '2026-08-06', rolling_7d_km: 10, understated_volume: false })])
+    const flippedEarly = [day({ date: '2026-08-06', rolling_7d_km: 10, understated_volume: false })]
     const option = buildShinVolumeOption(flippedEarly)
     const hatch = (option.series as Array<Record<string, unknown>>).find((s) => s.id === 'understated-volume')!
     expect(hatch.data).toEqual([null])
   })
 })
 
+describe('buildShinVolumeOption — x-axis date labels across a wide range', () => {
+  it('omits the year when the plotted range stays within one calendar year', () => {
+    const series = [day({ date: '2026-05-01' }), day({ date: '2026-08-10' })]
+    const option = buildShinVolumeOption(series)
+    const xAxis = option.xAxis as { axisLabel: { formatter: (iso: string) => string } }
+    expect(xAxis.axisLabel.formatter('2026-05-01')).toBe('05-01')
+  })
+
+  it('includes the year once the range crosses a calendar year boundary (§9 "6m"/"1y"/"all")', () => {
+    const series = [day({ date: '2023-05-13' }), day({ date: '2026-08-10' })]
+    const option = buildShinVolumeOption(series)
+    const xAxis = option.xAxis as { axisLabel: { formatter: (iso: string) => string } }
+    expect(xAxis.axisLabel.formatter('2023-05-13')).toBe('23-05-13')
+  })
+})
+
 describe('buildShinVolumeOption — prefers-reduced-motion (§9 quality floor)', () => {
   it('disables animation when the caller reports reduced motion', () => {
-    const data = response([day({ date: '2026-08-08' })])
-    expect(buildShinVolumeOption(data, { reducedMotion: true }).animation).toBe(false)
-    expect(buildShinVolumeOption(data, { reducedMotion: false }).animation).toBe(true)
+    const series = [day({ date: '2026-08-08' })]
+    expect(buildShinVolumeOption(series, { reducedMotion: true }).animation).toBe(false)
+    expect(buildShinVolumeOption(series, { reducedMotion: false }).animation).toBe(true)
+  })
+})
+
+describe('buildShinVolumeOption — axis-triggered hover tooltip (§9 on-demand inspection)', () => {
+  const series = [
+    day({ date: '2026-08-08', shin: 0, rolling_7d_km: 12.4, understated_volume: false }),
+    day({ date: '2026-08-09', shin: null, rolling_7d_km: 13.0, understated_volume: false }),
+    day({ date: '2026-08-06', shin: 2, rolling_7d_km: 9.8, understated_volume: true }),
+  ]
+  const option = buildShinVolumeOption(series)
+  const tooltip = option.tooltip as { trigger: string; formatter: (params: unknown) => string }
+
+  it('is axis-triggered, not item-triggered', () => {
+    expect(tooltip.trigger).toBe('axis')
+  })
+
+  it('shows the raw 0-3 shin value when answered, never blank, never a bare 0 rendered as nothing', () => {
+    const html = tooltip.formatter([{ dataIndex: 0 }])
+    expect(html).toContain('2026-08-08')
+    expect(html).toContain('shin: 0')
+    expect(html).toContain('12.4')
+  })
+
+  it('shows an explicit "not answered" when shin is null — never blank, never 0 (§5, CLAUDE.md rule 12)', () => {
+    const html = tooltip.formatter([{ dataIndex: 1 }])
+    expect(html).toContain('not answered')
+    expect(html).not.toMatch(/shin: 0(?!\S)/)
+  })
+
+  it('flags understated volume on days the flag is true', () => {
+    const html = tooltip.formatter([{ dataIndex: 2 }])
+    expect(html).toContain('volume floor')
+  })
+
+  it('does not flag understated volume when the flag is false', () => {
+    const html = tooltip.formatter([{ dataIndex: 0 }])
+    expect(html).not.toContain('volume floor')
+  })
+})
+
+describe('buildShinVolumeOption — not-answered marker density (crowding fix, v1.18)', () => {
+  function notAnsweredSeries(pointCount: number) {
+    const series = Array.from({ length: pointCount }, (_, i) => day({ date: `day-${i}` }))
+    const option = buildShinVolumeOption(series)
+    return (option.series as Array<Record<string, unknown>>).find((s) => s.id === 'shin-not-answered')!
+  }
+
+  it('keeps the not-answered ring at full size/opacity within about two legible weeks (<=14 points)', () => {
+    const notAnswered = notAnsweredSeries(14)
+    expect(notAnswered.symbolSize).toBe(7)
+    expect((notAnswered.itemStyle as Record<string, unknown>).opacity).toBe(1)
+  })
+
+  it('is already visibly shrunk at the reported crowding case — 90 points, most unanswered', () => {
+    // The reported fault: 88 hairline rings at 90 days swamping 2 real
+    // readings. This range must not still render at full size/opacity.
+    const notAnswered = notAnsweredSeries(90)
+    const size = notAnswered.symbolSize as number
+    const opacity = (notAnswered.itemStyle as Record<string, unknown>).opacity as number
+    expect(size).toBeLessThan(4)
+    expect(opacity).toBeLessThan(0.5)
+  })
+
+  it('shrinks further at a wide "all" range, but never to zero', () => {
+    const notAnswered = notAnsweredSeries(1000)
+    const size = notAnswered.symbolSize as number
+    const opacity = (notAnswered.itemStyle as Record<string, unknown>).opacity as number
+    expect(size).toBeGreaterThan(0)
+    expect(opacity).toBeGreaterThan(0)
+    expect(size).toBeLessThan(notAnsweredSeries(90).symbolSize as number)
+  })
+
+  it('leaves the answered shin markers at their fixed size regardless of density', () => {
+    const wide = Array.from({ length: 1000 }, (_, i) => day({ date: `day-${i}` }))
+    const option = buildShinVolumeOption(wide)
+    const shinLine = (option.series as Array<Record<string, unknown>>).find((s) => s.id === 'shin')!
+    expect(shinLine.symbolSize).toBe(9)
   })
 })

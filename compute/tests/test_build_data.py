@@ -11,19 +11,52 @@ from datetime import date
 
 import pytest
 
-from build_data import RANGE_DAYS, _default_range, _write_json
+from build_data import DATA_START, _range_coverage, _range_start, _write_json
 from metrics import shin_series
 
 
-def test_default_range_is_trailing_90_days_ending_today():
-    # Spec v1.17: fixed trailing window, independent of what `daily` holds
-    # — previously derived from daily's own min date, which shrank the
-    # range to 2-3 days once daily only held rows from 8 Aug 2026 onward.
+def test_range_start_day_based_ranges_are_trailing_n_days_ending_today():
+    # Spec v1.18: §9's 7d/30d/90d options are trailing N-day windows
+    # ending at `today`, same convention v1.17 used for the (now removed)
+    # single fixed 90-day emission window.
     today = date(2026, 8, 10)
-    start, end = _default_range(today)
-    assert end == today
-    assert (end - start).days == RANGE_DAYS - 1
-    assert start == date(2026, 5, 13)
+    floor = date(2023, 5, 13)
+    assert _range_start("7d", today, floor) == date(2026, 8, 4)
+    assert _range_start("30d", today, floor) == date(2026, 7, 12)
+    assert _range_start("90d", today, floor) == date(2026, 5, 13)
+
+
+def test_range_start_month_based_ranges_shift_calendar_months():
+    today = date(2026, 8, 10)
+    floor = date(2023, 5, 13)
+    assert _range_start("6m", today, floor) == date(2026, 2, 10)
+    assert _range_start("1y", today, floor) == date(2025, 8, 10)
+
+
+def test_range_start_all_is_the_floor():
+    today = date(2026, 8, 10)
+    assert _range_start("all", today, DATA_START) == DATA_START
+
+
+def test_range_start_never_precedes_floor_even_for_wide_ranges():
+    # A range nominally wider than the emitted series (e.g. "1y" soon
+    # after DATA_START) clamps up to the floor rather than pointing
+    # before the first plotted day.
+    today = date(2023, 6, 1)
+    floor = date(2023, 5, 13)
+    assert _range_start("1y", today, floor) == floor
+
+
+def test_range_coverage_counts_only_rows_inside_the_window():
+    series = [
+        {"date": date(2026, 8, 8), "shin": 1},
+        {"date": date(2026, 8, 9), "shin": None},
+        {"date": date(2026, 8, 10), "shin": 0},
+    ]
+    assert _range_coverage(series, date(2026, 8, 9), date(2026, 8, 10)) == {
+        "answered": 1,
+        "total": 2,
+    }
 
 
 def test_shin_series_json_roundtrip_null_shin_stays_null(tmp_path):
