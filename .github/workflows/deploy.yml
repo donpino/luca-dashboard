@@ -131,10 +131,19 @@ jobs:
           VITE_SUPABASE_PUBLISHABLE_KEY: ${{ secrets.VITE_SUPABASE_PUBLISHABLE_KEY }}
         run: npm run build
 
+      # wranglerVersion is pinned, not left to the action's default:
+      # assets-only Workers (no `main`, no assets.binding — v1.11) are a
+      # Wrangler 4 feature, but wrangler-action@v3 defaults to installing
+      # Wrangler 3, which rejects this config as having no entry-point.
+      # 4.120.0 is the exact version Cloudflare's own Git-integration
+      # build used against this identical config on 10 Aug 2026 and
+      # deployed successfully — see the v1.15 spec amendment. Revisit
+      # this pin if web/wrangler.jsonc's assets config ever changes.
       - name: Deploy to Cloudflare Workers
         uses: cloudflare/wrangler-action@v3
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           workingDirectory: web
+          wranglerVersion: "4.120.0"
           command: deploy

@@ -1,4 +1,4 @@
-# Training Dashboard — Build Spec v1.14
+# Training Dashboard — Build Spec v1.15
 
 **Athlete:** Luca · **Campaign:** middle-distance, Foundation block → 2032
 **Status:** Phase 1 complete — `daily` table, RLS/grants, `/log`,
@@ -21,7 +21,10 @@ built yet. **Deployment now runs in GitHub Actions**
 compute test suite) instead of Cloudflare's Git integration — see the
 v1.14 amendment below. Four new Actions secrets are required and do not
 exist yet; **disconnecting Cloudflare's Git integration is a pending
-manual step**, not yet done.
+manual step**, not yet done. `deploy.yml`'s first real run passed every
+step through `npm run build` and failed only at the Cloudflare deploy
+step, on a Wrangler major-version mismatch — see the v1.15 amendment
+below.
 · **Date:** 10 Aug 2026
 
 This document is the contract. It goes in the repo root alongside `CLAUDE.md`.
@@ -923,6 +926,42 @@ secrets are configured" step (same pattern as `sync.yml`: check each
 secret is non-empty, name which one is missing, never print a value)
 will fail closed on the first push-triggered run, by design — that is
 the correct behaviour, not a bug to chase.
+
+**Amendments in v1.15 (10 Aug 2026)** — forced by `deploy.yml`'s first
+real run (commit `998cc03`, workflow run #3), which passed every step
+— secrets check, `pytest`, `build_data.py`, `npm ci`, `npm run build` —
+and failed only at `cloudflare/wrangler-action@v3`:
+
+```
+✘ [ERROR] Missing entry-point: The entry-point should be specified via
+the command line (e.g. `wrangler deploy path/to/script`) or the `main`
+config field.
+```
+
+**1. Root cause: `wrangler-action`'s default Wrangler is v3; assets-only
+Workers need v4.** Left unpinned, `cloudflare/wrangler-action@v3`
+installed Wrangler 3.90.0. Under Wrangler 3, a config with no `main`
+field is invalid — but `web/wrangler.jsonc` has no `main` by design
+(v1.11 item 2: no Worker script, static assets only, so no `main` and
+no `assets.binding`). Assets-only Workers are a Wrangler 4 feature.
+Cloudflare's own Git-integration build (still connected per v1.14 item
+7) ran Wrangler 4.120.0 against this identical, unmodified config on
+the same day and deployed successfully — confirming the config was
+always correct and the action's default tool version was the only
+thing wrong.
+
+**2. Fix: pin `wranglerVersion: 4.120.0` on the deploy step. No config
+change.** `web/wrangler.jsonc` is untouched — no `main`, no
+`assets.binding` added. Adding either would convert the assets-only
+Worker into a scripted one and contradict v1.11. 4.120.0 specifically,
+not a floating `4` or `latest`, because an unpinned deploy tool is a
+silent-breakage risk the same way an unpinned Python or Node version
+would be, and 4.120.0 is not a guess — it is the exact version
+Cloudflare's own build already proved works against this config. The
+pin must be revisited if `web/wrangler.jsonc`'s assets configuration
+ever changes (e.g. a future scripted Worker with a real `main`), since
+a version proven for an assets-only config is not automatically proven
+for a different one.
 
 ---
 
