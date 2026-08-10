@@ -1,4 +1,4 @@
-# Training Dashboard — Build Spec v1.16
+# Training Dashboard — Build Spec v1.17
 
 **Athlete:** Luca · **Campaign:** middle-distance, Foundation block → 2032
 **Status:** Phase 1 complete — `daily` table, RLS/grants, `/log`,
@@ -27,7 +27,9 @@ exist yet; **disconnecting Cloudflare's Git integration is a pending
 manual step**, not yet done. `deploy.yml`'s first real run passed every
 step through `npm run build` and failed only at the Cloudflare deploy
 step, on a Wrangler major-version mismatch — see the v1.15 amendment
-below.
+below. **Two faults found on the §8.3 panel's first live view are fixed**
+— the `rolling_7d_km` line had no legend entry, and the default range
+was 2-3 days instead of a stated window — see the v1.17 amendment below.
 · **Date:** 10 Aug 2026
 
 This document is the contract. It goes in the repo root alongside `CLAUDE.md`.
@@ -1019,6 +1021,90 @@ from the shin step line so a not-answered day is a real gap
 Scope held to §8.3's one panel, per the task that produced this
 amendment: no nav, no client router, no global range selector (§9,
 still deferred to Phase 2 per v1.10), and no Today/Week/Lab pages.
+
+---
+
+**Amendments in v1.17 (10 Aug 2026)** — two faults found on the §8.3
+panel's first live view, reported by the athlete. Neither changes a
+metric formula (CLAUDE.md rule 3 held); both are rendering/driver
+fixes.
+
+**1. `rolling_7d_km` line had no legend entry — fixed, added to
+`ShinVolumePanel.tsx`'s existing legend list.** v1.16 gave the three
+shin marker states and the understated-volume hatch a legend entry
+each but never named the `rolling_7d_km` line itself, the largest
+element on the chart — the only cue was the small "km" axis label. A
+fourth swatch style, `.legend-swatch--line` (a short azzurro bar, not
+a circle — the existing swatch shapes were all built for point
+markers), is added alongside the existing three, and a new first
+`<li>` reads **"trailing 7-day running km (not weekly total)."** This
+specific wording is deliberate, not a generic axis label: it is what
+actually confused the athlete on first read — the panel gives a
+trailing-window sum, not a Mon–Sun calendar-week total, and "running"
+states plainly what CLAUDE.md rule 6 already enforces silently
+(cycling excluded). No change to `shinVolumeChart.ts` — the option
+builder was already correct; the legend is hand-authored HTML beside
+the chart (`ShinVolumePanel.tsx`), same as the other four entries, not
+an ECharts-native legend.
+
+**2. Default range was 2-3 days, not a stated window — fixed in
+`compute/build_data.py`.** `build_shin_series()` previously derived
+`start` as `min(daily.date)` — a leftover from before the range was
+ever a design decision, not a chosen window. Once `daily` held real
+rows (only from 8 Aug 2026 onward, per §5/§6), this collapsed the
+visible range to whatever `daily` happened to span, 2-3 days on first
+live view, rather than showing anything resembling a trend. Two
+direct consequences: the volume line had no shape, and the v1.7
+understated-volume hatch never appeared, because the entire visible
+range was already post-FR70 — the legend advertised a state (§8.3's
+binding hatch requirement) with no instance on screen to show it.
+
+**Decided: a fixed trailing 90-day window, ending at `today` (the
+date the build driver already receives as its own current-date
+argument — the freshest point a given run of `build_data.py` can
+represent, not derived from any table's contents).** 90 days was
+chosen, not measured, on one concrete requirement: it must reach back
+past 8 Aug 2026 far enough that the v1.7 hatch is actually visible and
+the volume line has real shape, without stretching to the full
+2023-2026 Strava history, which would compress 90+ days of real
+FR70-era detail into a few pixels for no benefit — nothing downstream
+of this panel needs multi-year granularity (§9's global range selector
+is deferred to Phase 2, and this panel has no range control of its
+own yet). A pure `_default_range(today)` helper replaces the
+`daily`-derived `start`, independently tested
+(`compute/tests/test_build_data.py`) against the trivial case a live
+Supabase fetch can't be — that it always returns exactly a 90-day
+trailing window regardless of what `daily` or `activities` contain,
+closing off a repeat of this exact bug.
+
+**Verified against the live database (10 Aug 2026):** `daily` holds
+two rows, 8 Aug (`shin=1`) and 9 Aug (`shin=0`) — no row yet for 10
+Aug. Regenerating `shin_series.json` under the new range reports
+coverage **2 answered / 90 days in range**, matching the task's
+expectation exactly. This is correct and is not softened anywhere in
+the render layer — §7's coverage rule ("declares its coverage as `n
+answered / n days in range`") already requires stating it plainly, and
+a range mostly older than `daily`'s own history is an honest
+description of the data, not a bug to hide.
+
+**`MIN_RANGE_DAYS_FOR_TREND`'s trigger is re-checked, not changed.**
+v1.16's minimum-data caption keys off `coverage.total` (range length in
+days), not `coverage.answered` (days with a real shin value) — at the
+90-day range this now renders, `total = 90 ≥ 7`, so the caption is
+correctly absent even though `answered` is only 2. This is still the
+right trigger: the caption exists to stop a short *range* from reading
+as a multi-week trend (v1.16's own reasoning, tied to `rolling_7d_km`'s
+own 7-day window, not to how many days happen to have a logged shin
+value) — `rolling_7d_km` itself is never null and plots for every day
+in range regardless of `daily` coverage (§7), so the line's shape is
+genuinely trustworthy at 90 days even with only 2 shin answers. A
+separate low-*answered* state was considered and rejected: the shin
+step series already renders sparse answers honestly via its own
+three-state marker encoding (§10) and the coverage caption beneath the
+chart, with no population-level claim for a caption to protect against
+(§3.4/§8.4's `min_n` gating is explicitly Lab-only, CLAUDE.md rule 7)
+— a second caption keyed on `answered` would duplicate information the
+marker states and coverage line already carry.
 
 ---
 

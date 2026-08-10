@@ -11,8 +11,19 @@ from datetime import date
 
 import pytest
 
-from build_data import _write_json
+from build_data import RANGE_DAYS, _default_range, _write_json
 from metrics import shin_series
+
+
+def test_default_range_is_trailing_90_days_ending_today():
+    # Spec v1.17: fixed trailing window, independent of what `daily` holds
+    # — previously derived from daily's own min date, which shrank the
+    # range to 2-3 days once daily only held rows from 8 Aug 2026 onward.
+    today = date(2026, 8, 10)
+    start, end = _default_range(today)
+    assert end == today
+    assert (end - start).days == RANGE_DAYS - 1
+    assert start == date(2026, 5, 13)
 
 
 def test_shin_series_json_roundtrip_null_shin_stays_null(tmp_path):

@@ -24,7 +24,7 @@ from __future__ import annotations
 import json
 import os
 import sys
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -73,14 +73,27 @@ def _write_json(path: Path, payload: dict) -> None:
     path.write_text(output_json)
 
 
+# Trailing window shown on the §8.3 shin panel — DASHBOARD_SPEC.md v1.17.
+# 90 days: long enough to show the pre-8-Aug-2026 period (so the v1.7
+# understated-volume hatch and the volume line's shape are actually
+# visible) without becoming unreadable at the full multi-year history.
+RANGE_DAYS = 90
+
+
+def _default_range(today: date) -> tuple[date, date]:
+    """Trailing RANGE_DAYS window ending at `today` — the caller's own
+    current-date argument, the freshest point this build can represent.
+    Previously `start` was derived from `daily`'s own minimum date, which
+    produced a 2-3 day range once `daily` existed (it only holds rows
+    from 8 Aug 2026 onward) instead of the intended fixed window."""
+    return today - timedelta(days=RANGE_DAYS - 1), today
+
+
 def build_shin_series(db, today: date) -> dict:
     daily = fetch_all(db, "daily", "date,shin")
-    if not daily:
-        start = today
-    else:
-        start = min(date.fromisoformat(r["date"]) for r in daily)
     activities = fetch_all(db, "activities", "date,type,distance_km")
-    return shin_series(activities, daily, start, today)
+    start, end = _default_range(today)
+    return shin_series(activities, daily, start, end)
 
 
 def main():

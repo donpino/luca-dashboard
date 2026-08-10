@@ -440,6 +440,13 @@ textarea {
   border: 2px solid var(--text);
 }
 
+.legend-swatch--line {
+  width: 14px;
+  height: 2px;
+  border-radius: 1px;
+  background: var(--azzurro);
+}
+
 .legend-swatch--hairline {
   background: transparent;
   border: 1px solid var(--muted);

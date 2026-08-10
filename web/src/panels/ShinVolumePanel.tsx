@@ -69,6 +69,10 @@ export default function ShinVolumePanel() {
           )}
           <ul className="panel__legend">
             <li>
+              <span className="legend-swatch legend-swatch--line" aria-hidden="true" />
+              trailing 7-day running km (not weekly total)
+            </li>
+            <li>
               <span className="legend-swatch legend-swatch--solid" aria-hidden="true" />
               shin in band (0)
             </li>
