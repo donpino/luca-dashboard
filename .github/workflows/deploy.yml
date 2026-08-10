@@ -1,0 +1,140 @@
+name: Deploy
+
+# Compute + build + deploy (DASHBOARD_SPEC.md §4/§12, v1.14). Deliberately
+# a separate workflow from sync.yml, not extra jobs bolted onto it: sync.yml
+# is a proven, already-hardened pipeline (Garmin token cache, MFA fallback,
+# public-log audit, failure semantics — all v1.8) and this workflow's two
+# very different trigger shapes (chained after ingest vs. an independent
+# frontend push) are more conditional surface than sync.yml's job needs.
+#
+# Two triggers converge on the same job:
+#   - workflow_run, chained after "Garmin sync" — the daily cron path.
+#     Ingest already ran; this only computes + builds + deploys.
+#   - push to main — a frontend or compute code change reaches the live
+#     site without waiting for tomorrow's 05:00 UTC cron. No path filter:
+#     a deploy is cheap, a missed deploy is a silent staleness bug.
+#   - workflow_dispatch — manual trigger from the Actions tab.
+#
+# Neither trigger ever runs ingest/sync.py. web/public/data/*.json is
+# gitignored (CLAUDE.md Layout) — build_data.py must run fresh on every
+# deploy regardless of trigger, or the build would ship with no data.
+on:
+  workflow_run:
+    workflows: ["Garmin sync"]
+    types: [completed]
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  # Two triggers can fire close together (a push landing right as the
+  # post-cron deploy starts). Two concurrent `wrangler deploy` runs
+  # against the same Worker is a real failure mode, not a hypothetical
+  # one — serialise them. cancel-in-progress stays false: unlike a
+  # superseded ingest run, an in-flight deploy should finish, not be cut
+  # off partway through publishing.
+  group: deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    # workflow_run fires on every conclusion, not just success — skip
+    # entirely if ingest failed or was cancelled. Cloudflare keeps
+    # serving the last successful deploy, which is the correct fallback
+    # (v1.14): nothing needs to be built specially for that, and
+    # deploying anyway risks freezing a partially-written Supabase state
+    # (sync.py failed mid-run) into a fresh, confidently-served build.
+    # push and workflow_dispatch have no ingest result to check.
+    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+          cache: "pip"
+          cache-dependency-path: |
+            ingest/requirements.txt
+            compute/requirements.txt
+
+      - name: Install Python dependencies
+        run: |
+          pip install -r ingest/requirements.txt
+          pip install -r compute/requirements.txt
+
+      - name: Verify required secrets are configured
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
+          VITE_SUPABASE_PUBLISHABLE_KEY: ${{ secrets.VITE_SUPABASE_PUBLISHABLE_KEY }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          missing=()
+          [ -z "$SUPABASE_URL" ] && missing+=("SUPABASE_URL")
+          [ -z "$SUPABASE_SERVICE_ROLE_KEY" ] && missing+=("SUPABASE_SERVICE_ROLE_KEY")
+          [ -z "$VITE_SUPABASE_URL" ] && missing+=("VITE_SUPABASE_URL")
+          [ -z "$VITE_SUPABASE_PUBLISHABLE_KEY" ] && missing+=("VITE_SUPABASE_PUBLISHABLE_KEY")
+          [ -z "$CLOUDFLARE_API_TOKEN" ] && missing+=("CLOUDFLARE_API_TOKEN")
+          [ -z "$CLOUDFLARE_ACCOUNT_ID" ] && missing+=("CLOUDFLARE_ACCOUNT_ID")
+          if [ ${#missing[@]} -gt 0 ]; then
+            echo "::error::Missing required repository secret(s): ${missing[*]}. Add them at Settings > Secrets and variables > Actions > New repository secret, then re-run."
+            exit 1
+          fi
+          echo "All required secrets are present."
+
+      # Gate, not a formality: CLAUDE.md "no metric ships untested" — a
+      # failing test here must block the deploy step below from ever
+      # running, same as it would block a human from merging.
+      - name: Run compute test suite
+        run: python -m pytest compute/tests
+
+      # Reads Supabase, writes web/public/data/shin_series.json. Never
+      # committed (CLAUDE.md Layout) — must run before every build.
+      - name: Compute metrics JSON
+        working-directory: compute
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: python build_data.py
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: web/.nvmrc
+          cache: "npm"
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install frontend dependencies
+        working-directory: web
+        run: npm ci
+
+      # VITE_* are Vite's build-time env vars — baked into the client
+      # bundle by static replacement, so they must be present on this
+      # step specifically. These are the publishable Supabase values,
+      # public by design (DASHBOARD_SPEC.md §11 rule 5) — never the
+      # service_role key, which stays scoped to the compute step above
+      # and must never reach web/ or any client bundle (CLAUDE.md rule 8).
+      - name: Build frontend
+        working-directory: web
+        env:
+          VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
+          VITE_SUPABASE_PUBLISHABLE_KEY: ${{ secrets.VITE_SUPABASE_PUBLISHABLE_KEY }}
+        run: npm run build
+
+      - name: Deploy to Cloudflare Workers
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          workingDirectory: web
+          command: deploy

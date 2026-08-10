@@ -1,4 +1,4 @@
-# Training Dashboard — Build Spec v1.13
+# Training Dashboard — Build Spec v1.14
 
 **Athlete:** Luca · **Campaign:** middle-distance, Foundation block → 2032
 **Status:** Phase 1 complete — `daily` table, RLS/grants, `/log`,
@@ -13,9 +13,15 @@ known to be a floor, not a measurement — see the v1.7 amendment below
 and §5, §7, §8.3. Frontend is deployed and gated — Cloudflare Workers
 with static assets, live at the production `workers.dev` hostname,
 behind a verified Cloudflare Access policy, Preview URLs disabled —
-see the v1.11 and v1.12 amendments below. `compute/build_data.py` now
-writes the first real output artifact, `web/public/data/shin_series.json`
-— see the v1.13 amendment below; the §8.3 panel itself is not built yet.
+see the v1.11 and v1.12 amendments below.
+`compute/build_data.py` writes the first real output artifact,
+`web/public/data/shin_series.json` — v1.13; the §8.3 panel itself is not
+built yet. **Deployment now runs in GitHub Actions**
+(`.github/workflows/deploy.yml`: compute → build → deploy, gated on the
+compute test suite) instead of Cloudflare's Git integration — see the
+v1.14 amendment below. Four new Actions secrets are required and do not
+exist yet; **disconnecting Cloudflare's Git integration is a pending
+manual step**, not yet done.
 · **Date:** 10 Aug 2026
 
 This document is the contract. It goes in the repo root alongside `CLAUDE.md`.
@@ -813,6 +819,113 @@ opening instruction.
 
 ---
 
+**Amendments in v1.14 (10 Aug 2026)** — deployment moves into GitHub
+Actions, replacing Cloudflare's own Git integration. Forced by two
+findings, not a preference: Cloudflare's build image has no Python and
+no Supabase credentials, so it can never produce
+`web/public/data/*.json` (§4, gitignored per CLAUDE.md Layout — it is a
+build artifact, never committed); and the deployed `/log` route
+rendered blank because Cloudflare's build had no `VITE_SUPABASE_URL` /
+`VITE_SUPABASE_PUBLISHABLE_KEY` configured ("Build variables: None" in
+the deployment settings). GitHub Actions already holds every credential
+this pipeline needs (CLAUDE.md rule 8) — the alternative was
+maintaining the same secrets in two systems.
+
+**1. Two workflows, not one job added to `sync.yml`.** `sync.yml` is
+unchanged — same schedule, same Garmin token cache, same secrets, same
+public-log discipline (v1.8). A new `.github/workflows/deploy.yml` runs
+compute → build → deploy. Kept separate because `sync.yml` is a proven,
+already-hardened pipeline and deploy's two very different trigger
+shapes (chained after ingest vs. an independent frontend push) are more
+conditional surface than `sync.yml`'s single job needs.
+
+**2. Three triggers, one job.** `deploy.yml` runs on: `workflow_run`
+chained after `sync.yml` (`workflows: ["Garmin sync"]` — the workflow's
+exact `name:` field, confirmed against the file, not assumed); `push`
+to `main`, with **no path filter** — a deploy is cheap, a missed deploy
+is a silent staleness bug that only surfaces as confusion about why a
+change didn't appear; and `workflow_dispatch`, for manual triggering
+from the Actions tab. Neither trigger ever runs `sync.py` — `build_data.py`
+runs fresh on every deploy regardless of trigger, since
+`web/public/data/*.json` is gitignored and does not exist in a fresh
+checkout.
+
+**3. Ingest failure skips deploy entirely — no "deploy with yesterday's
+data" fallback needed.** `deploy.yml`'s job carries
+`if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'`.
+`workflow_run` fires on every conclusion, not just success, so this
+gate is required, not redundant. No special fallback path exists
+because none is needed: Cloudflare keeps serving the last successful
+deploy automatically until a new one lands, so skipping deploy *is*
+"keep serving yesterday's data." Deploying anyway would risk freezing a
+partially-written Supabase state into a confidently-served build if
+`sync.py` failed mid-run. Failure stays loud via `sync.yml`'s own
+existing exit-non-zero/notification behaviour (v1.8), unaffected by
+this amendment.
+
+**4. The compute test suite is a deploy gate.** `deploy.yml` runs
+`python -m pytest compute/tests` before `build_data.py`; any failure
+fails the job and nothing downstream (compute, build, or deploy) runs.
+Not previously enforced anywhere in CI — CLAUDE.md's "no metric ships
+untested" now has a real gate behind it, not just a local convention.
+
+**5. Concurrency: serialised, never cancelled mid-flight.** `deploy.yml`
+carries `concurrency: {group: deploy, cancel-in-progress: false}`. Two
+triggers can fire close together (a push landing right as the
+post-cron deploy starts); two concurrent `wrangler deploy` runs against
+the same Worker is a real failure mode. Unlike `sync.yml`'s Garmin
+token cache concern (also `cancel-in-progress: false`, for a different
+reason), the reasoning here is that an in-flight deploy should finish
+publishing, not be cut off partway through.
+
+**6. Four new Actions secrets — none created by this amendment; all
+are the athlete's action in the Cloudflare/Supabase dashboards.**
+
+- `CLOUDFLARE_API_TOKEN` — scoped to this Cloudflare account only,
+  created from Cloudflare's built-in **"Edit Cloudflare Workers" API
+  token template**. Chosen over a hand-tightened custom scope
+  (`Account.Workers Scripts:Edit` alone would likely suffice for an
+  assets-only Worker with no custom domain route) because it is
+  Cloudflare's own tested default for `wrangler deploy`, and a
+  too-narrow token costs a debugging round-trip against a production
+  deploy path. Recorded here by template name so the token is
+  reproducible if it ever needs recreating.
+- `CLOUDFLARE_ACCOUNT_ID` — not sensitive by itself, stored as a secret
+  anyway for the same "one place for pipeline config" reason as the
+  next two.
+- `VITE_SUPABASE_URL`, `VITE_SUPABASE_PUBLISHABLE_KEY` — the publishable
+  values `web/.env.example` already documents, named identically. These
+  are **not confidential** — §11 rule 5 already establishes the
+  publishable key ships in the client bundle by design — storing them
+  as Actions secrets is a consistency choice (one place for all
+  pipeline config), not a security requirement. Passed as `env:` on the
+  `npm run build` step only, since Vite's `VITE_*` variables are baked
+  into the bundle at build time by static replacement. The
+  `SUPABASE_SERVICE_ROLE_KEY` secret `sync.yml` already has is reused
+  by the compute step for `build_data.py` — no new Supabase secret
+  needed — and is never present in the build step's `env:` block; it
+  must never reach `web/` or any client bundle (CLAUDE.md rule 8).
+
+**7. Cloudflare's Git integration is not yet disconnected.** This
+amendment ships the GitHub Actions workflow; disconnecting Cloudflare's
+own Git integration (Cloudflare dashboard → Workers project → Settings
+→ Builds) is a separate, manual dashboard action left for the athlete,
+deliberately not attempted by this change. Until it happens, a push to
+`main` triggers **both** pipelines — Cloudflare's own build (still
+missing its `VITE_*` variables, so `/log` stays blank on that path) and
+this workflow. The two do not conflict destructively — Cloudflare
+serves whichever deploy landed last — but the redundancy should be
+closed once this workflow is proven.
+
+**8. First runs are expected to fail.** None of the four secrets above
+exist yet at the time this amendment lands. The "verify required
+secrets are configured" step (same pattern as `sync.yml`: check each
+secret is non-empty, name which one is missing, never print a value)
+will fail closed on the first push-triggered run, by design — that is
+the correct behaviour, not a bug to chase.
+
+---
+
 ## 1. What this is
 
 A private-by-design training dashboard — public source repo, privately-hosted
@@ -907,15 +1020,19 @@ threshold and displays `insufficient data — 14/60 days` instead. See §8.4.
 │  Both buckets PRIVATE, never in the repo — §11.6        │
 └──────────────────────────┬──────────────────────────────┘
 ┌─ COMPUTE ──────────────── ▼ ────────────────────────────┐
-│  metrics.py  — §7 definitions, strips coordinates,      │
-│                writes public/data/*.json                │
+│  metrics.py     — §7 definitions, strips coordinates    │
+│  build_data.py  — headless driver, writes               │
+│                   public/data/*.json (v1.14)             │
 └──────────────────────────┬──────────────────────────────┘
-┌─ RENDER ───────────────── ▼ ────────────────────────────┐
-│  Vite + React + ECharts, two static entries (v1.10,      │
-│  merge to single bundle + router deferred to Phase 2)    │
-│  → Cloudflare Workers + static assets, gated by          │
-│    Cloudflare Access (v1.9, host updated v1.11)          │
-│  /log = second entry → Supabase Auth + RLS (write)       │
+                           │  GitHub Actions — deploy.yml,
+                           │  chained after sync.yml (v1.14)
+┌─ BUILD + DEPLOY ───────── ▼ ────────────────────────────┐
+│  Vite + React + ECharts, two static entries (v1.10,     │
+│  merge to single bundle + router deferred to Phase 2)   │
+│  npm ci && npm run build → wrangler deploy (v1.14)      │
+│  → Cloudflare Workers + static assets, gated by         │
+│    Cloudflare Access (v1.9, host updated v1.11)         │
+│  /log = second entry → Supabase Auth + RLS (write)      │
 └─────────────────────────────────────────────────────────┘
 ```
 
@@ -926,6 +1043,19 @@ screen was computed in `metrics.py` and is therefore testable and versioned.
 **Coordinate stripping is a hard gate in `metrics.py`**, not a rendering choice.
 Latitude and longitude are dropped before any file is written to `public/`. A
 unit test asserts no output JSON contains a key matching `/lat|lon|coord|polyline/`.
+
+**Compute, build, and deploy all run in GitHub Actions — added v1.14,
+replacing Cloudflare's own Git integration.** `.github/workflows/deploy.yml`
+runs `build_data.py`, then `npm ci && npm run build` in `web/`, then
+`wrangler deploy` — chained after `.github/workflows/sync.yml` via
+`workflow_run`, and independently on every push to `main` and on manual
+`workflow_dispatch`. See the v1.14 amendment below for the full design
+and the secrets this requires. Cloudflare's Git integration (the source
+of the `/log` blank-page bug this amendment fixes — it never had the
+`VITE_*` build variables configured) is superseded by this workflow but
+**disconnecting it in the Cloudflare dashboard is a pending manual step,
+not yet done** — until it is, both pipelines will attempt to build and
+deploy on every push to `main`.
 
 **Two build entries, retained until Phase 2 (v1.10) — v1.9's planned
 single-bundle merge deferred, not reversed.** The render layer is a

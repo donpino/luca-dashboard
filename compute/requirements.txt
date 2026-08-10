@@ -1,0 +1,5 @@
+# Test-only dependency for compute/tests/ — kept separate from
+# ingest/requirements.txt's runtime deps (garminconnect, supabase,
+# python-dotenv), which build_data.py also needs and installs alongside
+# this file in .github/workflows/deploy.yml.
+pytest==9.1.1
