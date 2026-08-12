@@ -1,4 +1,4 @@
-# Training Dashboard — Build Spec v1.18
+# Training Dashboard — Build Spec v1.19
 
 **Athlete:** Luca · **Campaign:** middle-distance, Foundation block → 2032
 **Status:** Phase 1 complete — `daily` table, RLS/grants, `/log`,
@@ -36,7 +36,11 @@ not-answered-marker crowding at wide ranges — three more faults the
 athlete found on live view. §9's per-range mean/delta and the
 tap-to-inspect detail drawer remain explicitly deferred — see the v1.18
 amendment below and §13.
-· **Date:** 10 Aug 2026
+**`sessions`/`weekly`/`benchmarks` now exist** — migrations 006/007,
+Phase 2 (§12), ahead of the 17 Aug Meso 1 boundary. `sessions` carries
+no `shin` column; `activities.session_id`'s foreign key (deferred since
+migration 002) is now in place. See the v1.19 amendment below and §5.
+· **Date:** 12 Aug 2026
 
 This document is the contract. It goes in the repo root alongside `CLAUDE.md`.
 Anything not defined here is an open question, not an implementation detail to
@@ -1194,6 +1198,59 @@ commit, per the task:**
 - §9's **tap-to-inspect detail drawer** (day/week → sessions, journal,
   habits). Blocked on Phase 2 data that does not exist yet (§8.4, §12).
 
+**Amendments in v1.19 (12 Aug 2026)** — Phase 2 begins: `sessions`,
+`weekly`, `benchmarks` migrated into Supabase (migrations 006/007), ahead
+of the 17 Aug Meso 1 boundary (§12). This commit is schema only — the
+one-time Airtable port script, the `activities.session_id` backfill, the
+`ingest/sync.py` lookup for new activities, the coaching-thread
+instruction handoff, and dropping Airtable are separate, later steps.
+
+**1. `sessions` has no `shin` column — correcting a factual error in
+this section, not adding a new decision.** §5 previously said
+`sessions.shin` and `daily.shin` would "overlap by design during the
+transition" and that `sessions.shin` would be "dropped" after 17 Aug.
+That was wrong on inspection: Airtable's own `Shin (0-3)` column is
+empty on every `sessions` row that exists, and `daily.shin` (via `/log`)
+has been the sole source since Phase 0 — there was never a real second
+value to overlap with. `sessions` is created with no `shin` column at
+all; nothing is being dropped later because nothing was ever there.
+Recovering 20 Jul – 7 Aug 2026 shin history out of Airtable's free-text
+`Actual` field into `daily` — the period logged in Airtable before
+`/log` existed — is a separate, later task, not designed around here.
+See the corrected `sessions` field list below.
+
+**2. `execute_sql` authenticates as the `postgres` superuser, not
+`service_role` — confirmed this session.** The coaching thread (a
+separate Claude project) writes `sessions`/`weekly`/`benchmarks`
+directly via the Supabase MCP `execute_sql` connector. `select
+current_user, session_user` against the live project returns `postgres`
+for both — this bypasses row-level security and every table grant
+entirely, the same way applying a migration does. Consequence, stated
+plainly: **the `phase`/`session_type`/`done` CHECK constraints
+(`sessions_phase_check`, `sessions_session_type_check`,
+`sessions_done_check`) are the only database-level protection against a
+bad write from the coaching thread** — not a backstop behind PostgREST
+grants, the role CHECKs play for every other table in this schema
+(`authenticated`/`anon` cannot reach `execute_sql` at all). The
+coaching thread's own instructions must state the exact allowed vocab
+so this is never the first line of defense in practice.
+
+**3. `weekly.week_start`/`week_end` are parsed from `Weekly.Dates`
+text, not from a `full_plan.md` file — that file is not in this repo.**
+An earlier assumption that `full_plan.md` on disk gives every week's
+real dates doesn't hold: it isn't in the working tree or in git
+history. It lives in the coaching project's own knowledge files, not
+this repo. This isn't a blocker: every known week falls inside 2026
+(Airtable logging began 20 Jul 2026; the latest benchmark dates are 23
+and 26 Sep 2026), so the port parses each `Weekly.Dates` string (e.g.
+`"Aug 3-9"`, `"Jul 27-Aug 2"`) directly against year 2026 and asserts
+the result is a clean Monday→Sunday span — `weekly.week_start` is
+`CHECK`-constrained to a Monday (`weekly_starts_monday`) and
+`weekly.week_end` to exactly six days later (`weekly_mon_sun`). A row
+that doesn't parse to a clean week is a hard import error, not a guess.
+The self-verifying parse is the design; it does not depend on a file
+this repo doesn't have.
+
 ---
 
 ## 1. What this is
@@ -1235,7 +1292,7 @@ input to our own metrics.
 | 9 | Strava = **one-time bulk archive import only**, then dropped | Seeds the full Strava export history (13 May 2023 → 7 Aug 2026, corrected in v1.5 from an earlier "Dec 2025" estimate made before the real export was inspected). Account data export, not the API — no subscription, no ToS question. |
 | 10 | Garmin ingest = `python-garminconnect` | Unofficial but mature. ToS-grey; accepted knowingly. |
 | 11 | **Device-switch date is a hard break** in every series | Amazfit → FR70. Different sensor, different algorithm. Nothing averages across it. |
-| 12 | Migration timing: `daily` now, `sessions`/`weekly`/`benchmarks` at the **Meso 1 boundary (17 Aug)** | Never split a live mesocycle across two systems. |
+| 12 | Migration timing: `daily` now, `sessions`/`weekly`/`benchmarks` **schema** on 12 Aug (v1.19, ahead of schedule — a gate, not the cutover), **data port and Airtable cutover** at the **Meso 1 boundary (17 Aug)** | Never split a live mesocycle across two systems — the schema landing early doesn't move the cutover; Airtable stays authoritative and live until the port is verified. |
 
 ---
 
@@ -1524,10 +1581,18 @@ formula. See the v1.7 amendment above and §7's matching note.
 **No coordinates. No polyline. No start location.** Not stored, not fetched into
 the output layer.
 
-**`session_id` has no foreign-key constraint until Phase 2 (17 Aug).** The
-column is created in the 002 migration so `activities` can be joined once
-`sessions` lands, but `sessions` itself does not exist yet — referential
-integrity is added in the same migration that creates it. See §12.
+**`session_id` has a foreign-key constraint as of migration 006 (v1.19,
+12 Aug 2026)** — `activities_session_id_fkey`, referencing `sessions(id)`.
+Deferred since the 002 migration, which created the column so `activities`
+could be joined once `sessions` landed. The join itself is by date,
+many-to-one: `activities` carries no time-of-day/ordering column beyond
+Garmin's opaque numeric `id`, so same-day activities cannot be
+individually disambiguated and all link to that day's one `sessions` row.
+A date with no matching `sessions` row leaves `session_id` `NULL` — not
+an error, the column is nullable for exactly that case. Population
+(the one-time backfill, and the ongoing `ingest/sync.py` lookup for new
+activities) is separate from the constraint and not yet done — see the
+v1.19 amendment above and §12.
 
 **Field mapping, confirmed against a real FR70 run (v1.2, 9 Aug 2026)** —
 sourced from `get_activity(id).summaryDTO` (the aggregate summary), not
@@ -1561,16 +1626,33 @@ VO2max (`vO2MaxValue`), and `activityTrainingLoad` are model outputs, same
 class as Training Readiness/Status excluded by §1. Not stored; retained in
 the raw archive. See §7 for wrist running power, excluded the same way.
 
-### `sessions` — the plan (ported from Airtable, 17 Aug)
-Existing shape retained: `date` · `week` · `phase` · `session_type` · `purpose` ·
-`prescription` · `done` · `actual` · `rpe` · `shin` · `note`
+### `sessions` — the plan (schema migrated 12 Aug 2026, migration 006, v1.19)
+Airtable shape retained, minus `shin`: `id` (uuid PK) · `date` (unique) ·
+`week` · `phase` · `session_type` · `purpose` · `prescription` · `done` ·
+`actual` · `rpe` · `note`. `phase`, `session_type`, and `done` are each
+`text not null` with a named `CHECK` constraining them to the Airtable
+source's exact vocabulary (`sessions_phase_check`,
+`sessions_session_type_check`, `sessions_done_check`) — an unmapped value
+is a hard error at import, never defaulted.
 
-`sessions.shin` and `daily.shin` overlap by design during the transition. After
-17 Aug, `daily.shin` is authoritative and `sessions.shin` is dropped.
+**No `shin` column, and none was ever dropped — see the v1.19 amendment
+above for the correction.** `daily.shin` (via `/log`) has been the sole
+source since Phase 0; Airtable's own `Shin (0-3)` field was empty on
+every row.
 
-### `weekly` / `benchmarks`
-Ported as-is. `weekly.dates` now Mon–Sun. `benchmarks` holds the corrected
-1500 m (23 Sep) and 800 m (26 Sep) dates.
+### `weekly` / `benchmarks` (schema migrated 12 Aug 2026, migration 006, v1.19)
+Ported as-is, plus real `date` columns for the week boundary:
+`weekly.week_start` (Monday, PK) and `weekly.week_end` (Sunday), both
+`CHECK`-constrained to a clean Mon–Sun span, parsed from the Airtable
+`Dates` free text (`dates_label`, kept for audit only — never read by
+compute or the frontend) — see the v1.19 amendment above for why this
+doesn't depend on `full_plan.md`. `benchmarks` holds the corrected
+1500 m (23 Sep) and 800 m (26 Sep) dates, unique on `(test, date)`.
+
+**The one-time Airtable port itself — writing rows into these tables,
+and backfilling `activities.session_id` — has not happened yet.** This
+migration created the schema only; see the v1.19 amendment above for
+what's still open.
 
 **Added v1.7 — `weekly.actual_km` is more accurate than `activities`-derived
 `weekly_km` for the overlap period.** For 20 Jul 2026 onward (when the
