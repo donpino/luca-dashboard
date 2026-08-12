@@ -1,4 +1,4 @@
-# Training Dashboard — Build Spec v1.19
+# Training Dashboard — Build Spec v1.20
 
 **Athlete:** Luca · **Campaign:** middle-distance, Foundation block → 2032
 **Status:** Phase 1 complete — `daily` table, RLS/grants, `/log`,
@@ -40,6 +40,14 @@ amendment below and §13.
 Phase 2 (§12), ahead of the 17 Aug Meso 1 boundary. `sessions` carries
 no `shin` column; `activities.session_id`'s foreign key (deferred since
 migration 002) is now in place. See the v1.19 amendment below and §5.
+**The one-time Airtable port has now run** — `ingest/airtable_port.py`,
+28 `sessions`/10 `weekly`/4 `benchmarks` rows written (one undated
+Benchmarks row skipped), verified idempotent by running twice, and
+`activities.session_id` backfilled (35 rows linked; every remaining
+`NULL` predates the 20 Jul 2026 Airtable logging start). This is a
+snapshot, not a live sync — see the v1.20 amendment below for what that
+means and for the two decisions this run required that the spec didn't
+already cover.
 · **Date:** 12 Aug 2026
 
 This document is the contract. It goes in the repo root alongside `CLAUDE.md`.
@@ -1251,6 +1259,57 @@ that doesn't parse to a clean week is a hard import error, not a guess.
 The self-verifying parse is the design; it does not depend on a file
 this repo doesn't have.
 
+**Amendments in v1.20 (12 Aug 2026)** — the one-time Airtable port itself
+ran: `ingest/airtable_port.py`, a one-time archive-backfill script in the
+same category as `strava_import.py` (reads a static JSON export dumped
+from the base, never the live Airtable API — the export lives outside
+this repo, same reasoning as `strava_import.py`'s CSV export, since the
+free-text Note/Actual/Verdict/Current Limiter fields carry health and
+personal detail). 28 `sessions`, 10 `weekly`, and 4 `benchmarks` rows
+written; run twice against the live database and confirmed to leave
+identical row counts both times (CLAUDE.md rule 4). The separate
+`activities.session_id` backfill UPDATE then linked 35 rows; every
+remaining `NULL` was confirmed to predate 20 Jul 2026, the Airtable
+logging start (v1.19 amendment #3) — there is no gap inside the covered
+range.
+
+**This is a snapshot as of 12 Aug 2026, not a live sync.** Airtable
+remains the authoritative, actively-written source until the Meso 1
+boundary (17 Aug) cutover steps land — the coaching thread's write
+target, `ingest/sync.py`'s `sessions` lookup, and dropping Airtable are
+all still open (deferred by the v1.19 amendment above, untouched here).
+Any Airtable row written or edited after this port's run will not appear
+in Supabase until a later re-run or the cutover itself.
+
+**Two decisions this run needed that the spec didn't already cover:**
+
+**1. One Benchmarks row has no Date and was skipped, not ported.**
+Airtable's `Bloodwork (ferritin/iron/D/B12)` row carries a `Test` name
+and a `Notes` field ("Open action - book for after a rest day this
+week.") but no `Date`, `Result`, or `Vs Projection` — it is an open
+to-do, not a completed test event, unlike every other `benchmarks` row.
+`benchmarks.date` is `not null` by deliberate migration-006 design (every
+other row is a real dated test), and CLAUDE.md rule 12 forbids inventing
+a placeholder date to force it in. Aborting the whole port over one
+unrelated to-do row would also have blocked four real, well-formed
+benchmark rows. `airtable_port.py` skips any dateless `benchmarks` row
+and reports it by Airtable record id and Test name in its run summary —
+an explicit, reported skip, not a silent drop. The row is untouched in
+Airtable itself (this task's Airtable access was read-only throughout).
+
+**2. `service_role` needed `INSERT`/`UPDATE` on `sessions`/`weekly`/
+`benchmarks` — migration 008.** Migration 007 granted `service_role`
+`SELECT` only, because the only known reader at the time was
+`compute/metrics.py`. Running `airtable_port.py` under `service_role`
+(the same role every other headless ingest script in this repo
+authenticates as) failed with `permission denied for table sessions`
+until migration 008 added `INSERT`/`UPDATE` — the identical gap class
+and identical fix as migration 004 for `biometrics`/`activities`. No
+`DELETE` grant: nothing in this codebase deletes rows from these three
+tables. The ongoing writer stays the coaching thread's `postgres`-
+superuser `execute_sql` connection (migration 006's comment); this grant
+exists for `service_role`-authenticated one-time/backfill scripts.
+
 ---
 
 ## 1. What this is
@@ -1292,7 +1351,7 @@ input to our own metrics.
 | 9 | Strava = **one-time bulk archive import only**, then dropped | Seeds the full Strava export history (13 May 2023 → 7 Aug 2026, corrected in v1.5 from an earlier "Dec 2025" estimate made before the real export was inspected). Account data export, not the API — no subscription, no ToS question. |
 | 10 | Garmin ingest = `python-garminconnect` | Unofficial but mature. ToS-grey; accepted knowingly. |
 | 11 | **Device-switch date is a hard break** in every series | Amazfit → FR70. Different sensor, different algorithm. Nothing averages across it. |
-| 12 | Migration timing: `daily` now, `sessions`/`weekly`/`benchmarks` **schema** on 12 Aug (v1.19, ahead of schedule — a gate, not the cutover), **data port and Airtable cutover** at the **Meso 1 boundary (17 Aug)** | Never split a live mesocycle across two systems — the schema landing early doesn't move the cutover; Airtable stays authoritative and live until the port is verified. |
+| 12 | Migration timing: `daily` now, `sessions`/`weekly`/`benchmarks` **schema** on 12 Aug (v1.19) and the **data port itself** also on 12 Aug (v1.20, both ahead of schedule — a snapshot, not the cutover), **Airtable cutover** (coaching-thread handoff, `sync.py` lookup, dropping Airtable) still at the **Meso 1 boundary (17 Aug)** | Never split a live mesocycle across two systems — Airtable stays the authoritative, live-written source until the cutover steps land; the 12 Aug port is a verified one-time snapshot that will go stale until then, not a switch of authority. |
 
 ---
 
@@ -1649,10 +1708,13 @@ compute or the frontend) — see the v1.19 amendment above for why this
 doesn't depend on `full_plan.md`. `benchmarks` holds the corrected
 1500 m (23 Sep) and 800 m (26 Sep) dates, unique on `(test, date)`.
 
-**The one-time Airtable port itself — writing rows into these tables,
-and backfilling `activities.session_id` — has not happened yet.** This
-migration created the schema only; see the v1.19 amendment above for
-what's still open.
+**The one-time Airtable port ran 12 Aug 2026 (v1.20)** —
+`ingest/airtable_port.py` wrote 28 `sessions`, 10 `weekly`, and 4
+`benchmarks` rows (one undated Benchmarks row skipped — see the v1.20
+amendment above), and `activities.session_id` was backfilled separately
+(35 rows linked; every remaining `NULL` predates the 20 Jul 2026 Airtable
+logging start). This is a one-time snapshot, not a live sync — Airtable
+stays authoritative until the Meso 1 boundary cutover (§12, v1.20).
 
 **Added v1.7 — `weekly.actual_km` is more accurate than `activities`-derived
 `weekly_km` for the overlap period.** For 20 Jul 2026 onward (when the
