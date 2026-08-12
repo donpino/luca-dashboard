@@ -1,4 +1,4 @@
-# Training Dashboard — Build Spec v1.20
+# Training Dashboard — Build Spec v1.21
 
 **Athlete:** Luca · **Campaign:** middle-distance, Foundation block → 2032
 **Status:** Phase 1 complete — `daily` table, RLS/grants, `/log`,
@@ -48,6 +48,12 @@ Benchmarks row skipped), verified idempotent by running twice, and
 snapshot, not a live sync — see the v1.20 amendment below for what that
 means and for the two decisions this run required that the spec didn't
 already cover.
+**The 20 Jul – 7 Aug 2026 `daily.shin` recovery deferred by v1.19 has now
+run, partially** — four dates recovered from a number stated in
+`sessions.actual` for that specific day, three spans reviewed and
+rejected by the athlete because the text described a state rather than
+a day-specific number, and the rest of the window untouched. See the
+v1.21 amendment below.
 · **Date:** 12 Aug 2026
 
 This document is the contract. It goes in the repo root alongside `CLAUDE.md`.
@@ -1309,6 +1315,48 @@ and identical fix as migration 004 for `biometrics`/`activities`. No
 tables. The ongoing writer stays the coaching thread's `postgres`-
 superuser `execute_sql` connection (migration 006's comment); this grant
 exists for `service_role`-authenticated one-time/backfill scripts.
+
+---
+
+**Amendments in v1.21 (12 Aug 2026)** — the 20 Jul – 7 Aug 2026 `daily.shin`
+recovery flagged as deferred by the v1.19 amendment (#1, above) has now run,
+partially. `sessions.actual`'s free text for that window was reviewed by the
+athlete for any day-specific shin number; four `daily` rows were inserted (no
+existing row for any of these dates, so this is a plain insert, not an
+upsert-over-real-data case — CLAUDE.md rule 4's upsert-on-date form was still
+used, in case of a future re-run):
+
+| Date | `shin` |
+|---|---|
+| 2026-07-22 | 1 |
+| 2026-08-04 | 0 |
+| 2026-08-05 | 0 |
+| 2026-08-06 | 0 |
+
+**The governing rule: a shin value is recovered only where `sessions.actual`
+states a number for that specific day.** Prose describing a state or a trend
+without a number attached to a single date is not a reading, however
+unambiguous it reads to a human. This is the same reasoning as CLAUDE.md rule
+12 (a nullable field is never coerced to a default) applied one layer
+upstream, at extraction time rather than compute time: "cleared" or "have
+held at 0" describes a state, not a measurement of a specific day, and
+turning it into a number would be exactly the kind of improvised assessment
+§5's null rule exists to prevent.
+
+**Three spans in the same window were reviewed and rejected by the athlete,
+and stay `NULL` by decision — not oversight, and not to be revisited by a
+future pass over the same `sessions` text:**
+- **2026-07-23** — `sessions.actual` says "cleared," describing a state, not
+  a same-day number.
+- **2026-08-07** — `sessions.actual` says "have held at 0," describing a
+  streak's continuation, not a discrete reading for that date.
+- **2026-07-31, 2026-08-01, 2026-08-02** — covered only by a retrospective
+  "all clean" note spanning multiple days, with no per-day number to attribute
+  to any one of the three dates individually.
+
+The remaining dates in the 20 Jul – 7 Aug 2026 window that this pass did not
+even consider — every day `sessions.actual` doesn't mention shin at all —
+stay `NULL` for the ordinary reason: never answered, §5's null rule.
 
 ---
 
