@@ -1,0 +1,89 @@
+name: Nightly backup
+
+# Gate 0 for the Phase 2 sessions/weekly/benchmarks port (DASHBOARD_SPEC.md
+# §12) — CLAUDE.md and spec §4/§11.6 describe a nightly pg_dump into the
+# private Supabase Storage `backups/` bucket ("free tier has no backups;
+# this is the fix"), so this is the only copy of the database that exists
+# outside the one live Postgres instance. It must exist and run
+# successfully before any schema-changing migration is applied to a
+# database holding data that has no other copy.
+on:
+  schedule:
+    # 03:00 UTC — well before sync.yml's 05:00 UTC ingest and deploy.yml's
+    # chained build, so a backup always captures the previous day's state
+    # before anything else touches the database that day.
+    - cron: "0 3 * * *"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  # A manual dispatch landing next to the scheduled run must not race and
+  # produce two half-written dumps under similar timestamps.
+  group: backup
+  cancel-in-progress: false
+
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Verify required secrets are configured
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+        run: |
+          missing=()
+          [ -z "$SUPABASE_URL" ] && missing+=("SUPABASE_URL")
+          [ -z "$SUPABASE_SERVICE_ROLE_KEY" ] && missing+=("SUPABASE_SERVICE_ROLE_KEY")
+          [ -z "$SUPABASE_DB_URL" ] && missing+=("SUPABASE_DB_URL")
+          if [ ${#missing[@]} -gt 0 ]; then
+            echo "::error::Missing required repository secret(s): ${missing[*]}. SUPABASE_DB_URL is the direct (non-pooled) Postgres connection string with password, from Supabase Dashboard > Project Settings > Database > Connection string > URI, port 5432 — pg_dump needs session-level features a transaction-mode pooler connection doesn't support. Add secrets at Settings > Secrets and variables > Actions > New repository secret, then re-run."
+            exit 1
+          fi
+          echo "All required secrets are present."
+
+      # Runs pg_dump via the official postgres:17 image rather than
+      # whatever client version ubuntu-latest happens to preinstall — the
+      # project is on Postgres engine 17 (confirmed via Supabase MCP
+      # list_projects), and pg_dump refuses to talk to a newer server than
+      # itself. Custom format (-Fc) is compressed and supports selective
+      # pg_restore, unlike plain SQL text.
+      - name: pg_dump
+        env:
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+        run: |
+          FILENAME="luca-dashboard-$(date -u +%Y-%m-%dT%H%M%SZ).dump"
+          echo "FILENAME=$FILENAME" >> "$GITHUB_ENV"
+          docker run --rm \
+            -v "${{ github.workspace }}:/backup" \
+            -e SUPABASE_DB_URL="$SUPABASE_DB_URL" \
+            postgres:17 \
+            pg_dump "$SUPABASE_DB_URL" -Fc -f "/backup/$FILENAME"
+          ls -lh "$FILENAME"
+
+      # Uploaded via the Storage REST API with the service_role key, which
+      # bypasses storage RLS entirely (same trusted-backend role as
+      # ingest/sync.py and compute/build_data.py) — no storage policy is
+      # needed on the `backups` bucket for this to work. The bucket itself
+      # is private (public = false, confirmed at creation) per §11.6: it
+      # will contain `daily.journal` free text and must never be
+      # publicly readable.
+      #
+      # No retention/pruning is implemented here — every run adds one more
+      # object to the bucket. Free tier Storage is 1 GB and the current
+      # dump is small, but this will need a rotation policy eventually;
+      # flagged, not solved, here.
+      - name: Upload to Storage backups/ bucket
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: |
+          curl --fail-with-body -sS -X POST \
+            "$SUPABASE_URL/storage/v1/object/backups/$FILENAME" \
+            -H "Authorization: Bearer $SUPABASE_SERVICE_ROLE_KEY" \
+            -H "Content-Type: application/octet-stream" \
+            --data-binary "@$FILENAME"
+          echo "Uploaded $FILENAME to backups/."
