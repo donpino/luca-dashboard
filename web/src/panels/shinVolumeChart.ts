@@ -38,6 +38,35 @@ const UNDERSTATED_VOLUME_HATCH = {
   repeat: 'repeat' as const,
 }
 
+// Full-plot-height version of the same v1.7 requirement (DASHBOARD_SPEC.md
+// v1.22 amendment): the panel now carries real pre-FR70 `shin` readings
+// (spec v1.20's Airtable recovery), so a hatch confined to the km line's
+// own fill area left a shin marker plotted against understated mileage
+// with nothing marking it — the exact misread v1.7 exists to prevent.
+// This walks the already-computed `understated_volume` flags to find
+// contiguous true-runs and turns each into a markArea x-range, so — same
+// as the fill this replaces — the 8-Aug-2026 cutoff is never hardcoded
+// here; a flag flipped in the JSON flips the region. Boundaries are date
+// strings (matching the category axis's own `data`), not indices — see
+// ShinVolumePanel.tsx's rendering-time note for why that distinction
+// matters for this specific markArea.
+function understatedVolumeRegions(series: ShinSeriesDay[]): Array<[string, string]> {
+  const regions: Array<[string, string]> = []
+  let runStart: string | null = null
+  for (const d of series) {
+    if (d.understated_volume) {
+      if (runStart === null) runStart = d.date
+    } else if (runStart !== null) {
+      regions.push([runStart, d.date])
+      runStart = null
+    }
+  }
+  if (runStart !== null) {
+    regions.push([runStart, series[series.length - 1].date])
+  }
+  return regions
+}
+
 // §10: "solid marker = in band, hollow marker = out of band," and the
 // shin-only third state, "absent — hairline outline, no fill, sitting on
 // the axis." Red/green never used for in/out (§10) — fill-vs-hollow is
@@ -147,14 +176,14 @@ export function buildShinVolumeOption(
 
   const kmData = series.map((d) => d.rolling_7d_km)
 
-  // v1.7's binding rendering requirement (§8.3): the understated-volume
-  // portion gets a treatment distinct from the reference-band lane fill
-  // used elsewhere — chosen here as a hatched (decal) area under the km
-  // line, present only where understated_volume is true, recorded in
-  // DASHBOARD_SPEC.md's v1.16 amendment. The measured portion carries no
-  // area fill at all: shin has no continuous reference band (§10), so
-  // there is no "lane" for this metric to confuse the hatch with.
-  const understatedAreaData = series.map((d) => (d.understated_volume ? d.rolling_7d_km : null))
+  // v1.7's binding rendering requirement (§8.3), full-plot-height per the
+  // v1.22 amendment: a markArea on the shared grid, not a series-level
+  // fill, so it sits behind both the km line and the shin markers rather
+  // than only under the km line's own value. The measured portion still
+  // carries no area fill at all: shin has no continuous reference band
+  // (§10), so there is no "lane" for this metric to confuse the hatch
+  // with.
+  const understatedRegions = understatedVolumeRegions(series)
 
   const shinLineData = series.map((d) =>
     d.shin === null
@@ -226,18 +255,27 @@ export function buildShinVolumeOption(
     ],
     series: [
       {
+        // Invisible (opacity 0, no symbols) — it exists only to host the
+        // full-plot-height markArea below, on the lowest z of any series
+        // here so the hatch sits behind both the km line and the shin
+        // markers (v1.22 amendment). Reuses `kmData` as its own data so
+        // it's a genuine plotted series, not an empty one — see
+        // ShinVolumePanel.tsx for the rendering-time caveat this
+        // markArea still needs regardless.
         id: 'understated-volume',
         name: 'understated volume',
         type: 'line',
         yAxisIndex: 0,
-        data: understatedAreaData,
-        connectNulls: false,
+        data: kmData,
         showSymbol: false,
         silent: true,
-        z: 1,
+        z: 0,
         lineStyle: { opacity: 0 },
-        areaStyle: {
-          color: UNDERSTATED_VOLUME_HATCH,
+        markArea: {
+          silent: true,
+          animation: false,
+          itemStyle: { color: UNDERSTATED_VOLUME_HATCH },
+          data: understatedRegions.map(([start, end]) => [{ xAxis: start }, { xAxis: end }]),
         },
       },
       {

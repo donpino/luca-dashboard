@@ -59,8 +59,28 @@ export default function ShinVolumePanel() {
     if (!chartRef.current || filteredSeries.length === 0) return
 
     const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
+    const option = buildShinVolumeOption(filteredSeries, { reducedMotion })
+
+    // ECharts quirk (v1.22 amendment), confirmed against a live render,
+    // not just the option object: a markArea on a category axis only
+    // resolves its `xAxis` date bounds correctly when applied via a
+    // *second*, separate setOption call, after the chart's axes already
+    // exist. Included in the very first setOption call — even alongside
+    // that same axis's own category data, in the same option object —
+    // it silently renders across the full axis instead of the given
+    // date range. So the understated-volume region (carried as
+    // `markArea` on the first series) is stripped from the initial call
+    // and merged back in immediately after.
+    const series = option.series as Array<Record<string, unknown>> | undefined
+    const understatedVolumeSeries = series?.find((s) => s.id === 'understated-volume')
+    const markArea = understatedVolumeSeries?.markArea
+    if (understatedVolumeSeries) delete understatedVolumeSeries.markArea
+
     const chart = echarts.init(chartRef.current)
-    chart.setOption(buildShinVolumeOption(filteredSeries, { reducedMotion }))
+    chart.setOption(option)
+    if (markArea) {
+      chart.setOption({ series: [{ id: 'understated-volume', markArea }] })
+    }
 
     const resize = () => chart.resize()
     window.addEventListener('resize', resize)

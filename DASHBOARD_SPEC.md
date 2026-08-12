@@ -1,4 +1,4 @@
-# Training Dashboard — Build Spec v1.21
+# Training Dashboard — Build Spec v1.22
 
 **Athlete:** Luca · **Campaign:** middle-distance, Foundation block → 2032
 **Status:** Phase 1 complete — `daily` table, RLS/grants, `/log`,
@@ -54,6 +54,11 @@ run, partially** — four dates recovered from a number stated in
 rejected by the athlete because the text described a state rather than
 a day-specific number, and the rest of the window untouched. See the
 v1.21 amendment below.
+**The §8.3 understated-volume hatch is now full-plot-height, covering both
+series** — v1.16's fill only reached the km line's own height, which left
+the pre-FR70 `shin` readings v1.21 just inserted with nothing marking them.
+The three shin marker states (§10) are unchanged. See the v1.22 amendment
+below.
 · **Date:** 12 Aug 2026
 
 This document is the contract. It goes in the repo root alongside `CLAUDE.md`.
@@ -1360,6 +1365,86 @@ stay `NULL` for the ordinary reason: never answered, §5's null rule.
 
 ---
 
+**Amendments in v1.22 (12 Aug 2026)** — two corrections found by auditing the
+§8.3 panel against the four `daily.shin` rows the v1.21 amendment inserted.
+
+**1. The pre-8-Aug-2026 understated-volume treatment is now full-plot-height,
+covering both series — binding, supersedes v1.16 on this point.** v1.16 built
+the v1.7 hatch as a fill under the `rolling_7d_km` line's own value, on the
+km axis only, because at the time no `daily.shin` row existed before 8 Aug
+2026 — there was nothing for the fill's height to fail to cover. v1.21
+changed that: it inserted real pre-FR70 `shin` readings at 2026-07-22,
+2026-08-04, 2026-08-05, and 2026-08-06, all inside the understated window. A
+fill confined to the km line's own height does not reliably reach a shin
+marker plotted on the chart's separate 0–3 axis — the two axes share the
+same pixel grid but not the same value range, so a shin marker can sit above
+the top of the km fill and read as if it carries no understated-volume
+warning at all. That is the exact misread v1.7's binding requirement exists
+to prevent, now realised on real data rather than hypothetically. **Fix:** the
+hatch renders as an ECharts `markArea` on the shared grid — an x-only range
+per contiguous run of `understated_volume = true` (still read day-by-day off
+`shin_series.json`, never a hardcoded date, per v1.16's original reasoning)
+with no y bound, so it spans the full plot height — sitting behind both the
+`rolling_7d_km` line and the shin marker/step series (lowest z of any series
+on the chart) rather than under one line's own value. Same hatch texture,
+same legend entry, same silence toward tooltip/interaction as before — only
+the region's shape and z-position changed.
+
+**Implementation note, not a design decision: an ECharts rendering quirk,
+confirmed against a live render rather than assumed from the option object
+alone.** A markArea on a category axis only resolves its `xAxis` date
+bounds correctly when applied via a second, separate `setOption` call made
+after the chart's axes already exist. Included in the very first
+`setOption` call — even alongside that same axis's own category data, in
+the same option object, which is how every other series-level option in
+this codebase is applied — it silently renders across the full axis
+instead of the given date range, with no error and no console warning.
+`ShinVolumePanel.tsx` works around this by stripping `markArea` off the
+host series before the first `setOption` call and merging it back in with
+a second call immediately after. `shinVolumeChart.ts`'s pure option
+builder is untouched by this — it still returns one full option object
+with `markArea` inline, keeping CLAUDE.md's "no metric ships untested"
+extension to the render layer intact; the two-call split is entirely a
+rendering-time concern.
+
+**The three shin marker states (§10) are deliberately untouched by this
+fix, and must stay that way.** §10 defines exactly three states for `shin` —
+solid (in band), hollow (out of band), absent (not answered) — and is
+explicit that a not-answered day must never look like a day with no pain.
+Restyling, tinting, or adding a fourth state to markers that happen to fall
+in the understated-volume window would encode the same "floor, not
+measurement" information twice, in two different visual systems, on the
+same three points that already carry it once via the background region —
+and would risk exactly the ambiguity §10 was written to rule out (does a
+tinted marker mean "out of band" or "understated period"?). The background
+region carries the understated-volume signal; the marker continues to carry
+only in-band/out-of-band/not-answered, nothing else, at every date.
+
+**2. §13's open question 4 (pre-FR70 volume metrics reading from
+`sessions`/`weekly` instead of `activities`) is unaffected by this fix and
+stays open.** This amendment only changes how the existing
+`understated_volume` flag is rendered, not what produces it or what
+`rolling_7d_km` is computed from.
+
+**3. Correction to v1.21's three rejected spans (2026-07-23, 2026-08-07,
+2026-07-31/08-01/08-02): the rejection is scoped to that specific review
+pass, not a permanent bar on those dates.** v1.21 rejected them because the
+`sessions.actual` text available at the time described a state or a
+multi-day span, not a same-day number (§5's null rule applied at extraction
+time). That is a statement about that text, not about the dates themselves —
+it does not mean those three dates may never hold a `shin` value. A future
+pass that re-reads the same `sessions.actual` text and reaches a different
+conclusion is out of scope and not authorised by this correction; the
+review of that specific text is closed. But a per-day `shin` number arriving
+from any other source — most directly, the athlete entering it for one of
+those dates via `/log` (§8.5) — is a normal `upsert`-on-date write like any
+other `/log` entry, and is not blocked by v1.21 or by this amendment. Those
+three rows stay `NULL` today for the ordinary reason (never answered),
+exactly like every other unlogged day in the window, not for a special
+one.
+
+---
+
 ## 1. What this is
 
 A private-by-design training dashboard — public source repo, privately-hosted
@@ -1941,7 +2026,13 @@ understated, and that portion **must not** be used, by this panel or any
 other feature, to infer a volume-tolerance threshold. **Chosen in v1.16:
 a diagonal hatch fill**, read from the JSON's `understated_volume` flag
 day-by-day rather than a hardcoded cutoff — see the v1.16 amendment for
-the reasoning.
+the reasoning. **Full-plot-height as of v1.22:** v1.16's hatch filled only
+under the `rolling_7d_km` line's own height; once real pre-FR70 `shin`
+readings existed in this range (v1.21), that left a shin marker with
+nothing marking it as sitting against understated volume. The hatch now
+renders as a markArea spanning the full plot height, behind both series,
+still day-by-day off the same flag — see the v1.22 amendment. §10's three
+shin marker states are unchanged by this.
 
 ### 8.4 Lab — locked by default
 Correlation matrix, weekday effects, bedtime-vs-recovery scatter, habit impact.

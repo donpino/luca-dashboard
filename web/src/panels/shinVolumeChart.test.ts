@@ -97,26 +97,64 @@ describe('buildShinVolumeOption — rolling_7d_km line', () => {
   })
 })
 
-describe('buildShinVolumeOption — understated-volume treatment (§8.3 v1.7, binding)', () => {
-  it('only fills the hatched area where understated_volume is true, reading the flag as-is', () => {
+describe('buildShinVolumeOption — understated-volume treatment (§8.3 v1.7/v1.22, binding)', () => {
+  type MarkAreaSeries = { markArea: { data: unknown[]; itemStyle: { color: Record<string, unknown> } }; z: number }
+
+  it('spans a markArea from the first to the last understated_volume day, reading the flag as-is', () => {
     const series = [
       day({ date: '2026-08-06', rolling_7d_km: 10, understated_volume: true }),
       day({ date: '2026-08-07', rolling_7d_km: 11, understated_volume: true }),
       day({ date: '2026-08-08', rolling_7d_km: 12, understated_volume: false }),
     ]
     const option = buildShinVolumeOption(series)
-    const hatch = (option.series as Array<Record<string, unknown>>).find((s) => s.id === 'understated-volume')!
-    expect(hatch.data).toEqual([10, 11, null])
-    const areaStyle = hatch.areaStyle as Record<string, unknown>
-    const color = areaStyle.color as Record<string, unknown>
-    expect(color.image).toContain('svg')
+    const region = (option.series as Array<Record<string, unknown>>).find(
+      (s) => s.id === 'understated-volume',
+    ) as unknown as MarkAreaSeries
+    expect(region.markArea.data).toEqual([[{ xAxis: '2026-08-06' }, { xAxis: '2026-08-08' }]])
+    expect(region.markArea.itemStyle.color.image).toContain('svg')
   })
 
   it('never hardcodes the cutoff date — a flag flipped in the fixture flips the render', () => {
     const flippedEarly = [day({ date: '2026-08-06', rolling_7d_km: 10, understated_volume: false })]
     const option = buildShinVolumeOption(flippedEarly)
-    const hatch = (option.series as Array<Record<string, unknown>>).find((s) => s.id === 'understated-volume')!
-    expect(hatch.data).toEqual([null])
+    const region = (option.series as Array<Record<string, unknown>>).find(
+      (s) => s.id === 'understated-volume',
+    ) as unknown as MarkAreaSeries
+    expect(region.markArea.data).toEqual([])
+  })
+
+  it('emits no region when the visible range never touches understated volume', () => {
+    const series = [
+      day({ date: '2026-08-08', understated_volume: false }),
+      day({ date: '2026-08-09', understated_volume: false }),
+    ]
+    const option = buildShinVolumeOption(series)
+    const region = (option.series as Array<Record<string, unknown>>).find(
+      (s) => s.id === 'understated-volume',
+    ) as unknown as MarkAreaSeries
+    expect(region.markArea.data).toEqual([])
+  })
+
+  it('is the lowest-z series so it renders behind both the km line and the shin markers', () => {
+    const series = [day({ date: '2026-08-06', understated_volume: true })]
+    const option = buildShinVolumeOption(series)
+    const byId = (id: string) =>
+      (option.series as Array<Record<string, unknown>>).find((s) => s.id === id) as unknown as { z: number }
+    const region = byId('understated-volume')
+    const km = byId('rolling-7d-km')
+    const shin = byId('shin')
+    expect(region.z).toBeLessThan(km.z)
+    expect(region.z).toBeLessThan(shin.z)
+  })
+
+  it('is silent and unanimated, so it never intercepts hover or animates in', () => {
+    const series = [day({ date: '2026-08-06', understated_volume: true })]
+    const option = buildShinVolumeOption(series)
+    const region = (option.series as Array<Record<string, unknown>>).find(
+      (s) => s.id === 'understated-volume',
+    ) as unknown as { markArea: { silent: boolean; animation: boolean } }
+    expect(region.markArea.silent).toBe(true)
+    expect(region.markArea.animation).toBe(false)
   })
 })
 
