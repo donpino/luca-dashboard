@@ -1,6 +1,10 @@
 /* DASHBOARD_SPEC.md §10 — visual system tokens. Shared by both build
-   entries (dashboard stub + /log). Single stylesheet, phone-first only —
-   no desktop breakpoints are added here (§8.5, §9). */
+   entries (dashboard + /log). Single stylesheet, phone-first by default.
+   The one exception, added v1.25: the dashboard's persistent nav (§9) is
+   a left sidebar >=768px and a bottom bar below it — see the .nav rules
+   below. /log stays phone-first, single column, no desktop layout (§8.5)
+   and never grows a breakpoint of its own; the .nav classes it never
+   renders are the only ones this stylesheet changes by viewport width. */
 
 :root {
   --ink: #0b0e13;
@@ -32,8 +36,6 @@ body {
 }
 
 #root {
-  max-width: 480px;
-  margin: 0 auto;
   min-height: 100vh;
   display: flex;
   flex-direction: column;
@@ -70,6 +72,9 @@ textarea {
 /* ---- layout ---- */
 
 .page {
+  width: 100%;
+  max-width: 480px;
+  margin: 0 auto;
   flex: 1;
   display: flex;
   flex-direction: column;
@@ -82,6 +87,105 @@ textarea {
   justify-content: space-between;
   gap: 12px;
   padding-bottom: 12px;
+}
+
+/* ---- dashboard shell (§9 nav) ---- */
+
+.app-shell {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+}
+
+.app-main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  /* clears the fixed bottom nav bar, mobile default */
+  padding-bottom: 76px;
+}
+
+@media (min-width: 768px) {
+  .app-main {
+    padding-bottom: 0;
+    /* clears the fixed sidebar nav, desktop */
+    padding-left: 208px;
+  }
+}
+
+/* ---- primary nav (§9) — bottom bar on mobile, left sidebar >=768px ---- */
+
+.nav {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 10;
+  display: flex;
+  background: var(--surface);
+  border-top: 1px solid var(--line);
+}
+
+.nav__item {
+  flex: 1;
+  min-height: 64px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  font-family: inherit;
+  font-size: 13px;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+/* Bold weight + a solid indicator bar, not colour alone, mark the current
+   tab (§10: readable without colour) — the bar's presence/absence and the
+   weight shift both survive a grayscale render; the hue does not have to. */
+.nav__item--active {
+  color: var(--text);
+  font-weight: 600;
+  box-shadow: inset 0 2px 0 0 var(--text);
+}
+
+.nav__item--log {
+  border-left: 1px solid var(--line);
+}
+
+@media (min-width: 768px) {
+  .nav {
+    top: 0;
+    right: auto;
+    bottom: 0;
+    width: 208px;
+    flex-direction: column;
+    border-top: none;
+    border-right: 1px solid var(--line);
+    padding-top: 24px;
+  }
+
+  .nav__item {
+    flex: none;
+    min-height: 48px;
+    flex-direction: row;
+    justify-content: flex-start;
+    padding: 0 24px;
+    font-size: 14px;
+  }
+
+  .nav__item--active {
+    box-shadow: inset 2px 0 0 0 var(--text);
+  }
+
+  .nav__item--log {
+    border-left: none;
+    border-top: 1px solid var(--line);
+    margin-top: auto;
+  }
 }
 
 /* ---- groups ---- */

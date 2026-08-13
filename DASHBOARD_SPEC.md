@@ -1,4 +1,4 @@
-# Training Dashboard — Build Spec v1.24
+# Training Dashboard — Build Spec v1.25
 
 **Athlete:** Luca · **Campaign:** middle-distance, Foundation block → 2032
 **Status:** Phase 1 complete — `daily` table, RLS/grants, `/log`,
@@ -71,6 +71,12 @@ starting with 2026-08-12's "Easy Run," because the ongoing Garmin sync
 had no `sessions` lookup at all. One `sessions` row per date is enforced
 by `sessions_date_key` (migration 006, v1.19) — kept, not dropped. See
 the v1.24 amendment below and §5.
+**The dashboard now has a nav** — Today · Week · Block · Log, tabs backed
+by React state rather than the client router §4/v1.9 anticipated, for
+reasons specific to running unmaintained for weeks at a time. §8.3's shin
+panel moved under Block unchanged; Today and Week ship as empty panel
+shells reading "Not built yet," no placeholder data. See the v1.25
+amendment below.
 · **Date:** 13 Aug 2026
 
 This document is the contract. It goes in the repo root alongside `CLAUDE.md`.
@@ -1535,6 +1541,81 @@ in `sessions`, but that is now documented as a tripwire against
 
 ---
 
+**Amendments in v1.25 (13 Aug 2026)** — the dashboard's first navigation
+shell. Before this commit the index route rendered only the §8.3 shin
+panel with no way to reach anything else, and `/log/` was reachable only
+by typing its URL. This commit adds a persistent nav (Today · Week ·
+Block · Log), moves the §8.3 panel under Block unchanged, and ships
+Today/Week as empty panel shells. Three items, per CLAUDE.md rule 13.
+
+**1. Navigation is tabs backed by React state, not the §4/v1.9 client
+router — binding, supersedes the router plan for now.** §4's v1.9
+amendment planned a single bundle with a client-side router once Week
+and Block existed to route to; v1.10 deferred only the bundle merge,
+leaving the router itself as the assumed mechanism once that day came.
+That day is this commit, and the router is not what got built. A client
+router needs the host to serve `index.html` for any unrecognised path —
+`/week`, `/block`, a stale bookmark, a typo — so the browser's own
+navigation reaches the app instead of the host's static-file 404.
+Getting that host rewrite rule right, and keeping it right through a
+future host or config change, is exactly the kind of thing that is easy
+to get wrong once and silently break: a deploy that regresses it doesn't
+error, it just serves a 404 on refresh or on every deep link, and the
+frontend's own tests can't catch a host-level routing rule. This project
+runs unmaintained for four-week windows (§1's premise for the athlete's
+role, unchanged) with no one available to notice or fix a bad deploy
+until the athlete happens to hit it. Tabs backed by `useState` in
+`App.tsx` carry no such failure mode — there is exactly one URL
+(`/`), the browser never routes, and a broken tab is a broken render,
+caught the same way any other React bug is caught. The cost, accepted
+explicitly: no deep-linking to a tab and no state restore on refresh —
+refreshing on Week silently lands back on Today, same as before this
+commit. **This does not retire the router as an idea.** It supersedes it
+*for now*, for the reason above; a client router remains a legitimate
+later change, once someone is actually available to notice and fix a
+bad deploy if the host rewrite rule is ever wrong — plausibly whenever
+Lab (§8.4, Phase 5) adds a fourth real page and deep-linking starts
+costing something to not have. §4's architecture diagram is updated
+above to say so, in place, rather than leaving the old router-first
+framing to mislead a future reader.
+
+**2. The two build entries stay separate, and the publishable key stays
+out of the dashboard entry — restated, not changed.** v1.9's reasoning
+for eventually merging the two entries was never about tab navigation
+existing — it was that Cloudflare Access (§2 decision 3) leaves no
+anonymous visitor to keep the write path away from (§4, §11 rule 5).
+That reasoning is unchanged by this commit. What *does* change is that
+the dashboard now, for the first time, renders a nav link that points at
+`/log/` — a future reader skimming the nav code could reasonably assume
+the two entries have therefore become one. They have not: `Nav`'s Log
+item is a plain `<a href="/log/">`, causing a full page load into the
+separate `web/log/index.html` bundle, exactly as typing the URL always
+did (§8.5). `App.tsx` and everything it imports (`Today`, `Week`,
+`Block`, `EmptyPanel`, `ShinVolumePanel`) still must never import
+`@supabase/supabase-js` or anything under `src/log/` — restated in
+`App.tsx`'s own top comment, not only here, since that is the file a
+future edit is most likely to touch first. The publishable key ships in
+`web/log/index.html` only, unchanged since v1.9/v1.10 (§11 rule 5).
+
+**3. Today and Week ship as empty shells — deliberately, not a stopgap
+someone forgot to fill in.** Each panel titled per §8.1/§8.2 renders
+literal text reading "Not built yet" (`panels/EmptyPanel.tsx`) rather
+than any sample series, placeholder number, or lorem text. This is the
+same discipline CLAUDE.md's Hard Rule 3 states for shipped panels —
+every number on screen must be traceable to a tested function — applied
+to the case of no function existing yet: the honest empty state is the
+absence of a number, never a fake one standing in for it. It matters
+more here than it would on a maintained dashboard, per the same
+four-week-unmaintained-window reasoning as item 1 above — a fake number
+during that window has nobody around to correct it, and this codebase's
+whole premise (§1) is that every number the athlete sees is a real
+measurement. Each `EmptyPanel` is a stand-in for one future real panel
+component, replaced one at a time as §8.1/§8.2 are actually built; the
+component itself must not grow props or variants to do more than render
+a title and the fixed empty-state text.
+
+---
+
 ## 1. What this is
 
 A private-by-design training dashboard — public source repo, privately-hosted
@@ -1637,7 +1718,8 @@ threshold and displays `insufficient data — 14/60 days` instead. See §8.4.
                            │  chained after sync.yml (v1.14)
 ┌─ BUILD + DEPLOY ───────── ▼ ────────────────────────────┐
 │  Vite + React + ECharts, two static entries (v1.10,     │
-│  merge to single bundle + router deferred to Phase 2)   │
+│  nav = state-backed tabs, not a router (v1.25) —        │
+│  merge to single bundle still deferred to Phase 2       │
 │  npm ci && npm run build → wrangler deploy (v1.14)      │
 │  → Cloudflare Workers + static assets, gated by         │
 │    Cloudflare Access (v1.9, host updated v1.11)         │
