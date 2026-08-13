@@ -33,7 +33,14 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ingest"))
 
 from dotenv import load_dotenv  # noqa: E402
 
-from metrics import assert_no_private_keys, shin_series  # noqa: E402
+from metrics import (  # noqa: E402
+    InsufficientData,
+    assert_no_private_keys,
+    last_night,
+    session_for_date,
+    shin_series,
+    today_flag,
+)
 
 DATA_DIR = Path(__file__).resolve().parent.parent / "web" / "public" / "data"
 
@@ -144,6 +151,39 @@ def build_shin_series(db, today: date) -> dict:
     return payload
 
 
+def _or_none(value):
+    """InsufficientData -> None for JSON output. §8.1's panels already
+    render their own "no data yet" state from a null field (same
+    convention as shin_series' None-for-unanswered), so there is no
+    separate insufficient-data shape to invent here — CLAUDE.md rule 13,
+    this is spelled out in the v1.26 amendment rather than left implicit."""
+    return None if isinstance(value, InsufficientData) else value
+
+
+def build_today(db, today: date) -> dict:
+    """§8.1 Today page — Panel 1 (last_night), Panel 2 (session), Panel 3
+    (flag). One JSON file for the whole page: all three panels load
+    together on the athlete's daily ten-second check, so one fetch beats
+    three (DASHBOARD_SPEC.md v1.26 amendment)."""
+    biometrics = fetch_all(db, "biometrics", "date,device,sleep_total_min,rhr,hrv_overnight")
+    daily = fetch_all(db, "daily", "date,shin,illness")
+    activities = fetch_all(db, "activities", "date,type,distance_km")
+    session_rows = (
+        db.table("sessions")
+        .select("date,session_type,purpose,prescription,done")
+        .eq("date", today.isoformat())
+        .execute()
+        .data
+    )
+
+    return {
+        "date": today,
+        "last_night": _or_none(last_night(biometrics, today)),
+        "session": session_for_date(session_rows, today),
+        "flag": today_flag(activities, daily, today),
+    }
+
+
 def main():
     db = get_db()
     today = date.today()
@@ -155,6 +195,11 @@ def main():
         f"wrote {out_path} — coverage "
         f"{payload['coverage']['answered']}/{payload['coverage']['total']}"
     )
+
+    today_payload = build_today(db, today)
+    today_out_path = DATA_DIR / "today.json"
+    _write_json(today_out_path, today_payload)
+    print(f"wrote {today_out_path} — flag: {today_payload['flag']}")
 
 
 if __name__ == "__main__":

@@ -11,8 +11,8 @@ from datetime import date
 
 import pytest
 
-from build_data import DATA_START, _range_coverage, _range_start, _write_json
-from metrics import shin_series
+from build_data import DATA_START, _or_none, _range_coverage, _range_start, _write_json
+from metrics import InsufficientData, last_night, session_for_date, shin_series, today_flag
 
 
 def test_range_start_day_based_ranges_are_trailing_n_days_ending_today():
@@ -96,6 +96,74 @@ def test_write_json_carries_coverage_counts(tmp_path):
     written = json.loads(out_path.read_text())
 
     assert written["coverage"] == {"answered": 1, "total": 3}
+
+
+def test_or_none_converts_insufficient_data_to_none():
+    assert _or_none(InsufficientData(reason="no rows")) is None
+
+
+def test_or_none_passes_a_real_value_through_unchanged():
+    assert _or_none({"rhr": 44}) == {"rhr": 44}
+
+
+def test_today_payload_json_roundtrip_all_three_panels_null_safe(tmp_path):
+    # Mirrors build_today()'s own dict shape without touching Supabase —
+    # no biometrics, no sessions row, nothing that qualifies as a flag.
+    # Every panel key must still be present and explicitly null, never
+    # dropped (same null-vs-missing-key discipline as shin's own
+    # roundtrip test above).
+    today = date(2026, 8, 13)
+    payload = {
+        "date": today,
+        "last_night": _or_none(last_night([], today)),
+        "session": session_for_date([], today),
+        "flag": today_flag([], [], today),
+    }
+    out_path = tmp_path / "today.json"
+    _write_json(out_path, payload)
+    written = json.loads(out_path.read_text())
+
+    assert written["date"] == "2026-08-13"
+    assert "last_night" in written and written["last_night"] is None
+    assert "session" in written and written["session"] is None
+    assert "flag" in written and written["flag"] is None
+
+
+def test_today_payload_json_roundtrip_carries_real_values(tmp_path):
+    today = date(2026, 8, 13)
+    biometrics = [
+        {
+            "date": "2026-08-13",
+            "device": "fr70",
+            "sleep_total_min": 410,
+            "rhr": 45,
+            "hrv_overnight": None,  # must survive as null, not 0 or dropped
+        }
+    ]
+    daily = [{"date": "2026-08-13", "shin": 1, "illness": None}]
+    sessions = [
+        {
+            "date": "2026-08-13",
+            "session_type": "Medio",
+            "purpose": "tempo control",
+            "prescription": "6km @ 3:50-4:00/km",
+            "done": "Pending",
+        }
+    ]
+    payload = {
+        "date": today,
+        "last_night": _or_none(last_night(biometrics, today)),
+        "session": session_for_date(sessions, today),
+        "flag": today_flag([], daily, today),
+    }
+    out_path = tmp_path / "today.json"
+    _write_json(out_path, payload)
+    written = json.loads(out_path.read_text())
+
+    assert written["last_night"]["rhr"] == 45
+    assert written["last_night"]["hrv_overnight"] is None
+    assert written["session"]["session_type"] == "Medio"
+    assert written["flag"] == {"kind": "shin", "date": "2026-08-13", "shin": 1}
 
 
 def test_write_json_raises_on_a_leaked_coordinate_key(tmp_path):

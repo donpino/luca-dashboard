@@ -603,6 +603,99 @@ textarea {
   opacity: 0.7;
 }
 
+/* ---- last night (§8.1 panel 1) ---- */
+
+.last-night__values {
+  display: flex;
+  gap: 20px;
+  list-style: none;
+  margin: 0 0 12px;
+  padding: 0;
+}
+
+.last-night__values li {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.last-night__label {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.last-night__values .mono {
+  font-size: 18px;
+  font-weight: 600;
+}
+
+.last-night__history {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+  margin-bottom: 4px;
+}
+
+.last-night__history th,
+.last-night__history td {
+  text-align: left;
+  padding: 4px 8px 4px 0;
+  color: var(--muted);
+}
+
+.last-night__history td:first-child {
+  color: var(--text);
+}
+
+/* ---- today's session (§8.1 panel 2) ---- */
+
+.session-detail {
+  margin: 0;
+}
+
+.session-detail__row {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.session-detail__row:last-child {
+  border-bottom: none;
+}
+
+.session-detail__row dt {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.session-detail__row dd {
+  margin: 0;
+  text-align: left;
+  font-size: 14px;
+}
+
+/* ---- flag (§8.1 panel 3) — amber used sparingly, never a verdict (§10) ---- */
+
+.panel--flag {
+  border-color: var(--amber);
+}
+
+.flag-panel__label {
+  color: var(--amber);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  margin: 0 0 4px;
+}
+
+.flag-panel__text {
+  margin: 0;
+  font-size: 14px;
+}
+
 /* ---- sticky footer ---- */
 
 .sticky-footer {

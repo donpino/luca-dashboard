@@ -1,4 +1,4 @@
-# Training Dashboard — Build Spec v1.25
+# Training Dashboard — Build Spec v1.26
 
 **Athlete:** Luca · **Campaign:** middle-distance, Foundation block → 2032
 **Status:** Phase 1 complete — `daily` table, RLS/grants, `/log`,
@@ -77,6 +77,17 @@ reasons specific to running unmaintained for weeks at a time. §8.3's shin
 panel moved under Block unchanged; Today and Week ship as empty panel
 shells reading "Not built yet," no placeholder data. See the v1.25
 amendment below.
+**§8.1 Today is now built — all three panels, replacing their empty
+shells.** "Last night" deliberately ships with **no reference band**: the
+only baselines that exist were recorded on the Amazfit and don't transfer
+to the FR70 (CLAUDE.md rule 5), so the panel shows the raw values, a
+current-device-era-only value list, and one line stating there is no band
+yet and roughly when one becomes possible — §8.1's original "vs *his*
+band" wording is deferred, not abandoned. "Today's session" reads
+`sessions` for the date. "Flag" evaluates three rules in order (shin,
+illness, a rolling-7-day volume ramp) and is absent entirely, not empty,
+when none qualify. `compute/build_data.py` gained `build_today()`,
+writing `web/public/data/today.json`. See the v1.26 amendment below.
 · **Date:** 13 Aug 2026
 
 This document is the contract. It goes in the repo root alongside `CLAUDE.md`.
@@ -1614,6 +1625,101 @@ component, replaced one at a time as §8.1/§8.2 are actually built; the
 component itself must not grow props or variants to do more than render
 a title and the fixed empty-state text.
 
+**Amendments in v1.26 (13 Aug 2026)** — §8.1 Today built for real,
+replacing its three `EmptyPanel`s. Three items, per CLAUDE.md rule 13.
+
+**1. Panel 1 ("Last night") ships with no reference band — binding,
+a departure from §8.1's original "vs *his* band" wording, deferred
+rather than abandoned.** The only baselines that exist anywhere in this
+codebase (`rhr_baseline`, `hrv_baseline`, §7) were recorded on the
+Amazfit, and CLAUDE.md rule 5 / decision 11 forbid any baseline from
+spanning the Amazfit/FR70 device break — `biometrics.device` has been
+`'fr70'` only since 8 Aug 2026 (§5), so there is currently no FR70-era
+history long enough to compute one, and Garmin's own HRV Status
+similarly reports the literal string `"NONE"` until roughly 21 nights
+have accumulated on a device (§7 `hrv_baseline`'s `HRV_BASELINE_MIN_DAYS`
+constant). Inventing a band from the handful of FR70 nights available
+today, or reusing the Amazfit numbers as a stand-in, would both violate
+CLAUDE.md's "if the build needs a decision the spec doesn't contain,
+stop and ask" — no such decision was ever made, and a plausible-looking
+band here is exactly the kind of silent contradiction that rule exists
+to prevent on a chart nobody may be watching for weeks at a time (§1).
+
+So Panel 1 renders three raw values (sleep total, RHR, HRV overnight)
+for the most recent `biometrics` row, a value list of every night on the
+*current* device only (reusing `_rows_on_current_device`, the same
+device-break filter `rhr_baseline`/`hrv_baseline` already use — CLAUDE.md
+rule 5), and one line, stated once for the panel and not per metric,
+saying there is no reference band yet, that the Amazfit baselines don't
+carry over, and the approximate date a band becomes possible. That date
+is computed, not hand-picked: `first_date_on_current_device +
+(HRV_BASELINE_MIN_DAYS − 1)` days — the same elapsed-day convention
+`hrv_baseline` already uses for its own `days_elapsed` gate, applied here
+to project forward rather than gate a render. The panel's own copy never
+states or implies the old Amazfit numbers. **This panel is expected to
+gain a real band once enough FR70 nights exist** — into `rhr_baseline` /
+`hrv_baseline` themselves, at which point this deferred state is retired,
+not extended.
+
+New `compute/metrics.py` function: `last_night(biometrics, as_of)` →
+`{date, sleep_total_min, rhr, hrv_overnight, device, device_since,
+values, band_possible_from}` or `InsufficientData` if no biometrics rows
+exist at all. `values` is every row on the current device up to and
+including `as_of`, each `{date, sleep_total_min, rhr, hrv_overnight}` —
+a NULL sensor reading stays NULL (CLAUDE.md rule 12), never zero-filled.
+
+**2. Panel 2 ("Today's session") reads `sessions` for the exact date,
+narrowed to four fields — session_type, purpose, prescription, done.**
+No row for today is a real, expected state (a rest day, a gap before the
+next Airtable-ported block) and renders as plain text saying so, not an
+empty panel or an error. New function: `session_for_date(sessions,
+target)` → the matching row's four fields, or `None`. `sessions.date` is
+unique (migration 006, v1.19), so at most one match is possible by
+construction.
+
+**3. Panel 3 ("Flag") — at most one, evaluated in this fixed order,
+stopping at the first hit; absent entirely (not an empty or
+"nothing to report" card) when none qualify.**
+
+   a. `daily.shin > 0` on today or yesterday, today checked first.
+      `NULL` is never a hit — NULL means *not answered*, never "fine"
+      (§5's null rule, CLAUDE.md rule 12); this is exercised directly by
+      a test (`test_today_flag_null_shin_never_triggers`).
+   b. `daily.illness is True` on today or yesterday, today checked
+      first. `NULL`/`False` are not hits.
+   c. A completed rolling 7-day km total more than 10% above the
+      preceding completed 7-day total. **"Completed" is binding: the
+      current window ends *yesterday*, never today** — today is still in
+      progress, and including its (possibly partial, possibly
+      not-yet-synced) distance would be a projection dressed up as a
+      measurement, which this rule must never produce. Reuses the
+      already-tested `rolling_7d_km`/`ramp_pct` (§7) rather than
+      reimplementing the ratio, but **this is a distinct metric from
+      §7's `ramp_pct`**: that one compares calendar Mon–Sun weeks via
+      `weekly_km` (§8.2's Week page), this compares two trailing 7-day
+      windows via `rolling_7d_km`, per this panel's own rule as stated
+      above — the two must not be confused or unified, they answer
+      different questions ("did the week happen" vs. "is today's
+      rolling load elevated"). The 10% threshold is the same tolerance
+      as `ramp_pct`'s reference band, held in a new constant,
+      `TODAY_FLAG_VOLUME_RAMP_PCT`, not shared code — coincidence of
+      value, not of meaning. "More than 10%" is strict (`>`, not `≥`).
+
+   New function: `today_flag(activities, daily, today)` → one of
+   `{"kind": "shin", "date", "shin"}`, `{"kind": "illness", "date"}`,
+   `{"kind": "volume_ramp", "window_end", "current_7d_km",
+   "prev_7d_km", "pct"}`, or `None`.
+
+**Data path, restated per CLAUDE.md rule 3:** all three panels read one
+new build artifact, `web/public/data/today.json`
+(`compute/build_data.py`'s `build_today()`), fetched once by `Today.tsx`
+and passed down as props — not three separate fetches, since all three
+panels load together on the athlete's daily ten-second check (§8.1). The
+frontend (`LastNightPanel`, `TodaySessionPanel`, `FlagPanel`,
+`panels/today.ts`, `panels/lastNightCopy.ts`, `panels/flagCopy.ts`)
+formats and selects only; every value, every date, and which flag rule
+fired were decided in `compute/metrics.py`.
+
 ---
 
 ## 1. What this is
@@ -2170,6 +2276,9 @@ These are binding. The frontend must not recompute or reinterpret them.
 | `hrv_baseline` | 7-day mean vs 30-day mean, plus Garmin's own HRV Status when available. Requires ≥ 21 days on FR70 before rendering at all. |
 | `impact_mechanics` | Per run: `avg_cadence`, `avg_vertical_oscillation`, `avg_vertical_ratio`, joined to `daily.shin` at date + 1 and date + 2. |
 | `shin_series` | `daily.shin` joined to `rolling_7d_km` by date. **`NULL` is never coerced to `0`.** A missing day renders as a gap in the step series with a distinct unfilled marker on the date axis — not a value, not a zero. Every panel consuming shin declares its coverage as `n answered / n days in range`. **Added v1.13 — the §10 band threshold for shin's marker state: `shin = 0` is `in_band`; `shin` 1–3 is `out_of_band`; no row is `not_answered`.** Each entry also carries `understated_volume` (v1.7's pre-8-Aug-2026 floor-not-measurement flag, §8.3). Both are computed by `shin_series` itself, not derived by the frontend (CLAUDE.md rule 3). |
+| `last_night` | **Added v1.26, §8.1 Panel 1.** Sleep/RHR/HRV for the most recent `biometrics` row, plus a value list scoped to the *current device only* (reuses `rhr_baseline`/`hrv_baseline`'s own `_rows_on_current_device` filter — CLAUDE.md rule 5) and a computed `band_possible_from` date (`first_date_on_current_device + (HRV_BASELINE_MIN_DAYS − 1)` days). **Deliberately computes no band** — see the v1.26 amendment for the full reasoning. A null sensor reading stays null (rule 12). |
+| `session_for_date` | **Added v1.26, §8.1 Panel 2.** The single `sessions` row for a given date (`sessions.date` is unique, §5), narrowed to `session_type`/`purpose`/`prescription`/`done`. No row is `None`, a real state, not an error. |
+| `today_flag` | **Added v1.26, §8.1 Panel 3.** At most one of `{shin, illness, volume_ramp}`, evaluated in that order, first hit wins, `None` if nothing qualifies. Rule 1: `daily.shin > 0` today or yesterday (today first), **NULL is never a hit**. Rule 2: `daily.illness is True` today or yesterday (today first). Rule 3: completed rolling 7-day km (window ending **yesterday**, never today — "never project the current week forward") more than `TODAY_FLAG_VOLUME_RAMP_PCT` (10%, strict `>`) above the preceding completed 7-day window, via `rolling_7d_km`/`ramp_pct`. **Distinct from `ramp_pct`'s own row above**: that compares calendar Mon–Sun weeks (`weekly_km`, §8.2); this compares two trailing 7-day windows (`rolling_7d_km`) — same 10% tolerance, different question, not shared code. |
 
 **Added v1.7 — floor, not measurement, for any range ending before
 2026-08-08.** `weekly_km`, `ramp_pct`, `rolling_7d_km`, and
@@ -2217,9 +2326,9 @@ Read-only, fully automatic. Ten seconds, once, in the morning.
 
 | Panel | Answers | Encoding |
 |---|---|---|
-| Last night | Sleep, RHR, HRV vs *his* band | Three values, each with its band drawn. No score. |
-| Today's session | What to do | Pulled from `sessions`: purpose, prescription, target numbers, one cue |
-| Flag | Anything needing a decision | **At most one.** If nothing qualifies, the slot is absent, not empty. |
+| Last night | Sleep, RHR, HRV | **Built v1.26 without a band — deferred, see the v1.26 amendment.** Three raw values, a current-device-era-only value list, and one note stating no band exists yet, that Amazfit baselines don't transfer, and the computed date a band becomes possible. Gains the originally-specified "vs *his* band" once `rhr_baseline`/`hrv_baseline` (§7) have enough FR70 nights. |
+| Today's session | What to do | Pulled from `sessions` for the exact date: `session_type`, `purpose`, `prescription`, `done`. No row for today renders as plain text saying so. |
+| Flag | Anything needing a decision | **At most one**, evaluated shin → illness → volume ramp, first hit wins (§7 `today_flag`, v1.26 amendment). If nothing qualifies, the slot is absent, not empty. |
 
 The only thing Luca touches is the `/log` link.
 

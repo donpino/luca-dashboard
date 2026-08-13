@@ -66,6 +66,12 @@ UNDERSTATED_VOLUME_CUTOFF = date(2026, 8, 8)  # §7/§8.3 v1.7 amendment.
 
 RUNNING = "running"  # CLAUDE.md rule 6 — cycling excluded from every running total
 
+TODAY_FLAG_VOLUME_RAMP_PCT = 0.10  # §8.1 v1.26 amendment, Flag rule 3.
+# Same 10% tolerance as §7 ramp_pct's reference band, but applied to a
+# completed rolling 7-day window rather than a calendar week — see
+# today_flag()'s docstring for why. "More than 10% above" is strict (>),
+# not >=.
+
 
 @dataclass(frozen=True)
 class InsufficientData:
@@ -455,6 +461,127 @@ def shin_series(activities: list[dict], daily: list[dict], start: date, end: dat
         day += timedelta(days=1)
     total = (end - start).days + 1
     return {"series": series, "coverage": {"answered": answered, "total": total}}
+
+
+# ---------------------------------------------------------------------------
+# §8.1 Today page — last_night, session_for_date, today_flag.
+# Added spec v1.26. See that amendment for the full reasoning; summarised
+# in each function's docstring below.
+# ---------------------------------------------------------------------------
+
+
+def last_night(biometrics: list[dict], as_of: date) -> dict | InsufficientData:
+    """Panel 1 ("Last night"): sleep/RHR/HRV for the most recent night, plus
+    a current-device-era-only value list and a computed band-eligibility
+    date. Deliberately computes **no band** — DASHBOARD_SPEC.md's v1.26
+    amendment: the only baselines that exist (RHR/HRV) were recorded on the
+    Amazfit and do not transfer to the FR70 (CLAUDE.md rule 5), and
+    Garmin's own HRV Status needs HRV_BASELINE_MIN_DAYS nights on a device
+    before it means anything (§7 hrv_baseline). A real band is added to
+    hrv_baseline/rhr_baseline once enough FR70 nights exist, not invented
+    here from a handful of nights.
+
+    Reuses `_rows_on_current_device` (same device-break filtering as
+    rhr_baseline/hrv_baseline, CLAUDE.md rule 5) so the value list never
+    crosses the Amazfit/FR70 break, and no cap beyond that — the era is
+    short by construction today, and once it grows past "small" a real
+    band replaces this list entirely (see the v1.26 amendment).
+    """
+    resolved = _rows_on_current_device(biometrics, as_of)
+    if resolved is None:
+        return InsufficientData(reason="no biometrics rows on or before as_of", n=0, required=1)
+    device, device_rows = resolved
+    latest = max(device_rows, key=lambda r: _to_date(r["date"]))
+    first_date = min(_to_date(r["date"]) for r in device_rows)
+    values = sorted(
+        (
+            {
+                "date": _to_date(r["date"]),
+                "sleep_total_min": r.get("sleep_total_min"),
+                "rhr": r.get("rhr"),
+                "hrv_overnight": r.get("hrv_overnight"),
+            }
+            for r in device_rows
+        ),
+        key=lambda r: r["date"],
+    )
+    return {
+        "date": _to_date(latest["date"]),
+        "sleep_total_min": latest.get("sleep_total_min"),
+        "rhr": latest.get("rhr"),
+        "hrv_overnight": latest.get("hrv_overnight"),
+        "device": device,
+        "device_since": first_date,
+        "values": values,
+        # First date the elapsed-day count reaches HRV_BASELINE_MIN_DAYS —
+        # same "days elapsed since first row on this device" convention as
+        # hrv_baseline's own days_elapsed, not a count of nights with data.
+        "band_possible_from": first_date + timedelta(days=HRV_BASELINE_MIN_DAYS - 1),
+    }
+
+
+def session_for_date(sessions: list[dict], target: date) -> dict | None:
+    """Panel 2 ("Today's session"): the single `sessions` row for `target`
+    (date is unique, §5), narrowed to the four fields the panel shows. No
+    row for the date is a real state, not an error — returns None, and the
+    render layer says so plainly rather than showing an empty panel.
+    """
+    for row in sessions:
+        if _to_date(row["date"]) == target:
+            return {
+                "session_type": row.get("session_type"),
+                "purpose": row.get("purpose"),
+                "prescription": row.get("prescription"),
+                "done": row.get("done"),
+            }
+    return None
+
+
+def today_flag(activities: list[dict], daily: list[dict], today: date) -> dict | None:
+    """Panel 3 ("Flag"): at most one, evaluated in order, stopping at the
+    first hit — DASHBOARD_SPEC.md §8.1 v1.26 amendment.
+
+    1. daily.shin > 0 on today or yesterday (today checked first). NULL is
+       never a hit — NULL means not answered, never "fine" (§5's null
+       rule, CLAUDE.md rule 12).
+    2. daily.illness is True on today or yesterday (today checked first).
+    3. Completed rolling 7-day km more than TODAY_FLAG_VOLUME_RAMP_PCT
+       above the preceding completed 7-day total. "Completed" means the
+       window ends yesterday, not today — today is still in progress and
+       including it would be a projection, which this rule must never do.
+       This deliberately reuses rolling_7d_km/ramp_pct (already tested
+       elsewhere) rather than reimplementing the ratio, but note it is NOT
+       the same metric as §7's ramp_pct: that one compares calendar
+       Mon-Sun weeks via weekly_km, this compares two trailing 7-day
+       windows via rolling_7d_km, per this page's own spec.
+
+    Returns None when nothing qualifies — the caller renders no panel at
+    all, not an empty or "nothing to report" one (§8.1).
+    """
+    shin_by_date = _shin_by_date(daily)
+    for d in (today, today - timedelta(days=1)):
+        shin_value = shin_by_date.get(d)
+        if shin_value is not None and shin_value > 0:
+            return {"kind": "shin", "date": d, "shin": shin_value}
+
+    illness_by_date = {_to_date(r["date"]): r.get("illness") for r in daily}
+    for d in (today, today - timedelta(days=1)):
+        if illness_by_date.get(d) is True:
+            return {"kind": "illness", "date": d}
+
+    completed_end = today - timedelta(days=1)
+    current_7d_km = rolling_7d_km(activities, completed_end)
+    prev_7d_km = rolling_7d_km(activities, completed_end - timedelta(days=7))
+    pct = ramp_pct(current_7d_km, prev_7d_km)
+    if not isinstance(pct, InsufficientData) and pct > TODAY_FLAG_VOLUME_RAMP_PCT:
+        return {
+            "kind": "volume_ramp",
+            "window_end": completed_end,
+            "current_7d_km": current_7d_km,
+            "prev_7d_km": prev_7d_km,
+            "pct": pct,
+        }
+    return None
 
 
 # ---------------------------------------------------------------------------
