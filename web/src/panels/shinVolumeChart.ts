@@ -47,9 +47,7 @@ const UNDERSTATED_VOLUME_HATCH = {
 // contiguous true-runs and turns each into a markArea x-range, so — same
 // as the fill this replaces — the 8-Aug-2026 cutoff is never hardcoded
 // here; a flag flipped in the JSON flips the region. Boundaries are date
-// strings (matching the category axis's own `data`), not indices — see
-// ShinVolumePanel.tsx's rendering-time note for why that distinction
-// matters for this specific markArea.
+// strings, matching the category axis's own `data`.
 function understatedVolumeRegions(series: ShinSeriesDay[]): Array<[string, string]> {
   const regions: Array<[string, string]> = []
   let runStart: string | null = null
@@ -258,10 +256,10 @@ export function buildShinVolumeOption(
         // Invisible (opacity 0, no symbols) — it exists only to host the
         // full-plot-height markArea below, on the lowest z of any series
         // here so the hatch sits behind both the km line and the shin
-        // markers (v1.22 amendment). Reuses `kmData` as its own data so
-        // it's a genuine plotted series, not an empty one — see
-        // ShinVolumePanel.tsx for the rendering-time caveat this
-        // markArea still needs regardless.
+        // markers (v1.22 amendment). Reuses `kmData` as its own data
+        // rather than an empty array: a series with no non-null data
+        // points gets no coordinateSystem, and a markArea on such a
+        // series has nothing to resolve its xAxis bounds against.
         id: 'understated-volume',
         name: 'understated volume',
         type: 'line',

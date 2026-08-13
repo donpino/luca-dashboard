@@ -1,4 +1,4 @@
-# Training Dashboard — Build Spec v1.22
+# Training Dashboard — Build Spec v1.23
 
 **Athlete:** Luca · **Campaign:** middle-distance, Foundation block → 2032
 **Status:** Phase 1 complete — `daily` table, RLS/grants, `/log`,
@@ -59,7 +59,12 @@ series** — v1.16's fill only reached the km line's own height, which left
 the pre-FR70 `shin` readings v1.21 just inserted with nothing marking them.
 The three shin marker states (§10) are unchanged. See the v1.22 amendment
 below.
-· **Date:** 12 Aug 2026
+**v1.22's two-`setOption` workaround for the same panel is removed** — it
+was based on an untested claim about ECharts markArea behaviour, isolated
+and found wrong; a single `setOption` call resolves the markArea's bounds
+correctly once the host series carries real data. Correction only, no
+rendering change. See the v1.23 amendment below.
+· **Date:** 13 Aug 2026
 
 This document is the contract. It goes in the repo root alongside `CLAUDE.md`.
 Anything not defined here is an open question, not an implementation detail to
@@ -1390,22 +1395,31 @@ on the chart) rather than under one line's own value. Same hatch texture,
 same legend entry, same silence toward tooltip/interaction as before — only
 the region's shape and z-position changed.
 
-**Implementation note, not a design decision: an ECharts rendering quirk,
-confirmed against a live render rather than assumed from the option object
-alone.** A markArea on a category axis only resolves its `xAxis` date
-bounds correctly when applied via a second, separate `setOption` call made
-after the chart's axes already exist. Included in the very first
-`setOption` call — even alongside that same axis's own category data, in
-the same option object, which is how every other series-level option in
-this codebase is applied — it silently renders across the full axis
-instead of the given date range, with no error and no console warning.
-`ShinVolumePanel.tsx` works around this by stripping `markArea` off the
-host series before the first `setOption` call and merging it back in with
-a second call immediately after. `shinVolumeChart.ts`'s pure option
-builder is untouched by this — it still returns one full option object
-with `markArea` inline, keeping CLAUDE.md's "no metric ships untested"
-extension to the render layer intact; the two-call split is entirely a
-rendering-time concern.
+**Implementation note, correcting v1.22's original text above, which was
+wrong and is superseded by this paragraph.** v1.22 originally claimed a
+general ECharts rendering quirk: that a markArea on a category axis only
+resolves its `xAxis` date bounds correctly via a second, separate
+`setOption` call made after the chart's axes already exist, and that
+`ShinVolumePanel.tsx` needed to strip `markArea` off the host series
+before the first call and merge it back in with a second call
+immediately after. That was never tested in isolation — during the same
+session, the host series' `data` went through three states (`[]`, then
+`series.map(() => null)`, then the real `kmData` it ships with today) and
+the two-call split was carried forward past the point where it stopped
+being necessary. The actual cause: an ECharts series with no non-null
+data points is never given a `coordinateSystem`, and a markArea attached
+to such a series has nothing to resolve its `xAxis` bounds against, so
+the bounds are silently dropped and the region renders across the full
+axis instead of the given date range, with no error and no console
+warning. That only applied while the host series carried `[]` or an
+all-null array. Once it carries `kmData` — real, non-null values, as it
+does in the committed panel — the markArea resolves correctly in a
+single `setOption` call; this was verified against a live render at both
+the 90d and `all` ranges (pixel-sampled the canvas directly: the hatch's
+alpha channel drops to zero exactly at the `understated_volume` boundary
+and nowhere else). `ShinVolumePanel.tsx` applies the full option,
+`markArea` included, in one `setOption` call. There is no second call and
+no rendering-time caveat left to document.
 
 **The three shin marker states (§10) are deliberately untouched by this
 fix, and must stay that way.** §10 defines exactly three states for `shin` —
@@ -1442,6 +1456,33 @@ other `/log` entry, and is not blocked by v1.21 or by this amendment. Those
 three rows stay `NULL` today for the ordinary reason (never answered),
 exactly like every other unlogged day in the window, not for a special
 one.
+
+**Amendments in v1.23 (13 Aug 2026)** — v1.22's implementation note was
+tested and found wrong; correction only, no rendering or behaviour
+change.
+
+**1. The two-`setOption` workaround in `ShinVolumePanel.tsx` is removed;
+the panel applies its full option, `markArea` included, in a single
+`setOption` call.** v1.22's claim of a general ECharts quirk — that a
+markArea on a category axis needs a second, separate `setOption` call to
+resolve its `xAxis` bounds — was never isolated from the other change
+made in the same session (switching the host series' `data` from an
+empty/all-null array to real `kmData`) and was never re-tested after that
+switch landed. Isolating it now: with the host series carrying `kmData`,
+a single `setOption` call resolves the markArea's bounds correctly.
+Verified against a live render at the 90d and `all` ranges by
+pixel-sampling the rendered canvas directly (not just reading the option
+object) — the hatch's alpha channel is uniform across the
+`understated_volume = true` span and drops to zero exactly at the
+`understated_volume = false` boundary, both times. See the corrected
+implementation note under v1.22 above, which replaces the original
+(wrong) one in place rather than being restated here.
+
+**2. No panel behaviour, marker encoding, or region-bounds logic
+changed.** This amendment corrects a claim about ECharts' rendering
+behaviour and the code written to work around it; `shinVolumeChart.ts`'s
+option builder, `understatedVolumeRegions()`, and the three shin marker
+states (§10) are untouched.
 
 ---
 
