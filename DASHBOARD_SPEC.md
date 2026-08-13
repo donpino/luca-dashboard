@@ -1,4 +1,4 @@
-# Training Dashboard — Build Spec v1.23
+# Training Dashboard — Build Spec v1.24
 
 **Athlete:** Luca · **Campaign:** middle-distance, Foundation block → 2032
 **Status:** Phase 1 complete — `daily` table, RLS/grants, `/log`,
@@ -64,6 +64,13 @@ was based on an untested claim about ECharts markArea behaviour, isolated
 and found wrong; a single `setOption` call resolves the markArea's bounds
 correctly once the host series carries real data. Correction only, no
 rendering change. See the v1.23 amendment below.
+**`ingest/sync.py` now links `activities.session_id` on write, plus a
+self-healing repair pass every run** — closes the gap where every
+activity synced since 8 Aug 2026 landed with `session_id` `NULL`,
+starting with 2026-08-12's "Easy Run," because the ongoing Garmin sync
+had no `sessions` lookup at all. One `sessions` row per date is enforced
+by `sessions_date_key` (migration 006, v1.19) — kept, not dropped. See
+the v1.24 amendment below and §5.
 · **Date:** 13 Aug 2026
 
 This document is the contract. It goes in the repo root alongside `CLAUDE.md`.
@@ -1484,6 +1491,48 @@ behaviour and the code written to work around it; `shinVolumeChart.ts`'s
 option builder, `understatedVolumeRegions()`, and the three shin marker
 states (§10) are untouched.
 
+**Amendments in v1.24 (13 Aug 2026)** — `ingest/sync.py` gains a
+`sessions` lookup, closing the gap where every activity synced since
+8 Aug 2026 (the ongoing scheduled job, distinct from the v1.20 one-time
+Airtable backfill) landed with `session_id` `NULL`. Full detail lives in
+§5 under `activities`, next to the constraint it depends on; summarised
+here per the roadmap's Phase 2 sync requirement (§12).
+
+**1. Link-on-write plus a self-healing repair pass, both matching the
+v1.20 backfill's own rule — every activity type on a date links to that
+date's one `sessions` row, never running-only.** `sync.py` fetches the
+full `id, date` map from `sessions` once per run and sets `session_id`
+on each activity it upserts, by date match. After the normal sync
+completes, a repair pass selects every `activities` row with
+`session_id IS NULL` across all dates (not just the run's window) and
+applies the same match — this closes the hole opened by the 17 Aug
+check-in cadence, where `sessions` rows are written a week at a time and
+an activity can be ingested before its own week's row exists. See §5
+for the full mechanism, including why the upsert never overwrites an
+existing non-null `session_id` with `NULL`.
+
+**2. Correction, per the v1.22/v1.23 precedent of marking a wrong claim
+as wrong rather than quietly rewording it: the work order that
+specified this amendment asserted "nothing enforces one row per
+`sessions` row per date at the schema level."** That was wrong.
+`sessions_date_key` (`UNIQUE (date)`, migration 006, v1.19) already
+enforces it, and this spec's own §5 description of `sessions` has said
+"`date` (unique)" since v1.19 — no spec text needed correcting, only the
+premise of the work order, caught before it reached the spec. The
+constraint is kept deliberately: live data shows a double training day
+is already represented as multiple `activities` rows under one
+`sessions` row (2026-07-21: two `running` plus one `other`, all linked
+to a single `Strength A` session), not as two `sessions` rows on one
+date, so the constraint forbids nothing the training plan needs; and
+after the 17 Aug cutover, the coaching thread writes `sessions` directly
+via `execute_sql`, which runs as the Postgres superuser and bypasses RLS
+and every grant in migrations 007/008 — the constraint is a fourth
+database-level guard on that path, alongside the three `CHECK`
+constraints already on `phase`/`session_type`/`done`. `sync.py`'s
+map-builder still logs a warning and drops any date it finds repeated
+in `sessions`, but that is now documented as a tripwire against
+`sessions_date_key` being dropped later, not as live-data handling.
+
 ---
 
 ## 1. What this is
@@ -1822,10 +1871,69 @@ many-to-one: `activities` carries no time-of-day/ordering column beyond
 Garmin's opaque numeric `id`, so same-day activities cannot be
 individually disambiguated and all link to that day's one `sessions` row.
 A date with no matching `sessions` row leaves `session_id` `NULL` — not
-an error, the column is nullable for exactly that case. Population
-(the one-time backfill, and the ongoing `ingest/sync.py` lookup for new
-activities) is separate from the constraint and not yet done — see the
-v1.19 amendment above and §12.
+an error, the column is nullable for exactly that case. Population is now
+done on both paths: the one-time backfill (v1.20, 35 rows) and the
+ongoing `ingest/sync.py` lookup for new activities (v1.24, below).
+
+**`ingest/sync.py` link-on-write and repair pass — added v1.24, 13 Aug
+2026.** Every activity synced from 8 Aug 2026 onward had no lookup at
+all until this amendment — `session_id` landed `NULL` on every row
+written by the scheduled job, starting with the 2026-08-12 "Easy Run"
+activity, because the ingest path had no `sessions` join. Fixed on two
+paths, both matching the v1.20 backfill's own rule exactly — every
+activity type on a date (`running`, `cycling`, `other` alike) links to
+that date's one `sessions` row, never running-only:
+
+1. **Link on write.** `sync.py` fetches the full `id, date` map from
+   `sessions` once per run (not per activity — cheap, ~28 rows) and sets
+   `session_id` on each activity upserted that run, keyed by date. The
+   upsert payload omits the `session_id` key entirely when the date has
+   no match, rather than setting it to `NULL` — PostgREST's upsert only
+   updates columns present in the payload, so an existing non-null
+   `session_id` is never clobbered by a later run that fails to find a
+   match (CLAUDE.md rule 4: upserts, never a destructive overwrite).
+2. **Repair pass, every run, after the write.** From 17 Aug 2026 onward
+   `sessions` rows are written one week at a time at each Sunday
+   check-in (§12), so an activity can be ingested days before its
+   `sessions` row exists — link-on-write alone would leave that row
+   `NULL` permanently once the sync window moves past it. So every run
+   also selects every `activities` row with `session_id IS NULL`, across
+   all dates (cheap — a few hundred rows, mostly pre-Airtable history
+   that will never link), and applies the same date match. This is a
+   plain `UPDATE` of `session_id` only; no other column is touched.
+
+Ambiguity (more than one `sessions` row on a date) is handled in the
+map-builder itself: a repeated date logs a warning naming the date and
+is dropped from the map, so every activity on that date is left `NULL`
+rather than guessed at. In the live schema this branch cannot currently
+fire — see the correction below — so it is a tripwire against
+`sessions_date_key` ever being dropped, not a path exercised by real
+data today.
+
+**Correction to an assertion made when this v1.24 work was specified:
+that "nothing enforces one row per `sessions` row per date at the
+schema level."** That was wrong, per the v1.22/v1.23 precedent of
+marking a wrong claim as wrong rather than quietly rewording it.
+`sessions_date_key` (`UNIQUE (date)`, migration 006, v1.19) already
+enforces exactly that, and always has — this section's own description
+of `sessions` below has said "`date` (unique)" since v1.19. No spec
+text was actually wrong; the false premise lived only in the work
+order that specified this amendment, caught before it was written into
+the spec. Recorded here because it changed the design: the original
+brief asked for a "more than one match" handling branch and a decision
+to *not* add a unique constraint, on the reasoning that double
+training days need two `sessions` rows. Live data contradicts that
+reasoning — 2026-07-21 already has three `activities` rows (two
+`running`, one `other`) linked to a single `Strength A` `sessions`
+row, which is the intended model: a double day is representable as
+multiple `activities` under one `sessions` row, not as two `sessions`
+rows on one date. `sessions_date_key` is being kept, deliberately, for
+a second reason beyond the model fit: after the 17 Aug cutover the
+coaching thread writes `sessions` directly via `execute_sql`, which
+authenticates as the Postgres superuser and bypasses RLS and every
+grant in migrations 007/008 — the constraint is a fourth database-level
+guard against a malformed write on that path, alongside the three
+existing `CHECK` constraints on `phase`/`session_type`/`done`.
 
 **Field mapping, confirmed against a real FR70 run (v1.2, 9 Aug 2026)** —
 sourced from `get_activity(id).summaryDTO` (the aggregate summary), not

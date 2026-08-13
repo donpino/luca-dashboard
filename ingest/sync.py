@@ -159,6 +159,30 @@ def _minutes(seconds) -> int | None:
     return round(seconds / 60) if seconds is not None else None
 
 
+def build_session_map(sessions_rows: list[dict]) -> dict[str, str]:
+    """date -> sessions.id, one entry per date.
+
+    `sessions_date_key` (migration 006, v1.19) already guarantees at most
+    one `sessions` row per date at the database level, so the duplicate
+    branch below can't fire against live data — it's a tripwire in case
+    that constraint is ever dropped, not a live-data code path (spec
+    v1.24).
+    """
+    session_map: dict[str, str | None] = {}
+    for row in sessions_rows:
+        d = row["date"]
+        if d in session_map:
+            print(
+                f"WARNING: multiple sessions rows found for date {d} — "
+                "sessions_date_key should make this impossible; leaving "
+                f"session_id NULL for {d}."
+            )
+            session_map[d] = None
+        else:
+            session_map[d] = row["id"]
+    return {d: sid for d, sid in session_map.items() if sid is not None}
+
+
 def sync_biometrics(client, db: Client, d: date) -> None:
     ds = d.isoformat()
     stats = client.get_stats(ds) or {}
@@ -204,7 +228,7 @@ def sync_biometrics(client, db: Client, d: date) -> None:
     )
 
 
-def sync_activities(client, db: Client, d: date) -> int:
+def sync_activities(client, db: Client, d: date, session_map: dict[str, str]) -> int:
     ds = d.isoformat()
     for_day = client.get_activities_fordate(ds) or {}
     stubs = ((for_day.get("ActivitiesForDay") or {}).get("payload")) or []
@@ -249,10 +273,51 @@ def sync_activities(client, db: Client, d: date) -> int:
             # Archiving to Storage is a later commit — see spec v1.4.
             "raw_archive_path": None,
         }
+        # session_id is deliberately omitted from the payload (not set to
+        # None) when there's no date match — PostgREST's upsert only
+        # updates columns present in the payload, so omitting the key
+        # leaves an existing non-null session_id untouched on conflict,
+        # per CLAUDE.md rule 4 and spec v1.24. Only include it when there
+        # is a real link to make.
+        session_id = session_map.get(ds)
+        if session_id is not None:
+            row["session_id"] = session_id
         db.table("activities").upsert(row, on_conflict="id").execute()
         count += 1
-        print(f"{ds}: activity {activity_id} ({canonical_type}) upserted.")
+        print(
+            f"{ds}: activity {activity_id} ({canonical_type}) upserted"
+            + (f", linked to session {session_id}." if session_id else ".")
+        )
     return count
+
+
+def repair_session_links(db: Client, session_map: dict[str, str]) -> tuple[int, int]:
+    """Self-healing pass over every `activities` row with `session_id IS
+    NULL`, across all dates, not just this run's sync window — that's
+    cheap (spec v1.24) and closes the check-in-timing hole: from 17 Aug
+    onward `sessions` rows are written weekly, so an activity can be
+    ingested before its session exists, and link-on-write alone would
+    leave it NULL permanently once the sync window moves past that date.
+    UPDATE of `session_id` only — no other column is touched.
+    """
+    unlinked = (
+        db.table("activities").select("id,date").is_("session_id", "null").execute().data
+    )
+
+    linked = 0
+    for row in unlinked:
+        session_id = session_map.get(row["date"])
+        if session_id is None:
+            continue
+        db.table("activities").update({"session_id": session_id}).eq("id", row["id"]).execute()
+        linked += 1
+
+    still_null = len(unlinked) - linked
+    print(
+        f"Repair pass: linked {linked} activity row(s) to a session, "
+        f"{still_null} left NULL (no matching session)."
+    )
+    return linked, still_null
 
 
 def main() -> None:
@@ -268,15 +333,24 @@ def main() -> None:
     client = get_client()
     db = get_supabase()
 
+    # Fetched once per run, not per activity — and unscoped to the sync
+    # window (all sessions are ~28 rows, cheap) since the repair pass below
+    # needs the full date range anyway, not just this run's window.
+    sessions_rows = db.table("sessions").select("id,date").execute().data
+    session_map = build_session_map(sessions_rows)
+
     total_activities = 0
     for d in days:
         sync_biometrics(client, db, d)
-        total_activities += sync_activities(client, db, d)
+        total_activities += sync_activities(client, db, d, session_map)
+
+    linked, still_null = repair_session_links(db, session_map)
 
     print(
         f"Done. {len(days)} day(s) processed "
         f"({days[0].isoformat()}..{days[-1].isoformat()}), "
-        f"{total_activities} activity row(s) upserted."
+        f"{total_activities} activity row(s) upserted. "
+        f"Repair pass: {linked} link(s) applied, {still_null} left NULL."
     )
 
 

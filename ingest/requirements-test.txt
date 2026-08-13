@@ -1,0 +1,4 @@
+# Test-only dependency for ingest/tests/ — kept separate from
+# ingest/requirements.txt's runtime deps, mirroring
+# compute/requirements.txt's split.
+pytest==9.1.1
