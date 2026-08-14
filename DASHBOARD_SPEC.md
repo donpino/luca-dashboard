@@ -1,4 +1,4 @@
-# Training Dashboard — Build Spec v1.29
+# Training Dashboard — Build Spec v1.30
 
 **Athlete:** Luca · **Campaign:** middle-distance, Foundation block → 2032
 **Status:** Phase 1 complete — `daily` table, RLS/grants, `/log`,
@@ -109,6 +109,15 @@ than bridging it, and a metric with fewer than three non-null points
 renders as text instead of a line. No trend line, slope, arrow, or
 direction word anywhere on the panel (§3.1); the v1.26 no-band decision
 is unchanged. See the v1.29 amendment below.
+**§8.1 Panel 1 was titled "Last night" but, under `ingest/sync.py`'s
+never-write-today clamp, never showed last night's data — a defect
+present since v1.26, made worse by v1.29 dropping the only place the
+reading's date was still visible on screen. Fixed by labelling, not by
+touching the clamp**: `last_night()` gained `days_behind`, the panel now
+always shows the reading's date and, past the clamp's normal one-day
+lag, a plain line naming the gap, and the panel is retitled "Most recent
+night." The clamp itself is deliberately unchanged going into the
+four-week unattended window. See the v1.30 amendment below.
 · **Date:** 14 Aug 2026
 
 This document is the contract. It goes in the repo root alongside `CLAUDE.md`.
@@ -1940,6 +1949,70 @@ information, hue carries none of it."
 
 ---
 
+**Amendments in v1.30 (14 Aug 2026)** — §8.1 Panel 1, titled "Last
+night," was showing the most recent `biometrics` row, which is not last
+night's data. **This is a defect, not a naming preference.** Verified
+against the live database while writing this amendment: today's date is
+2026-08-14, the newest `biometrics` row is dated 2026-08-13 —
+`days_behind = 1`, confirmed as the normal steady state, not an outage.
+
+**1. Root cause: `ingest/sync.py`'s never-write-today clamp, interacting
+with §5's wake-date filing rule.** Per §5, a `biometrics` row is
+correctly dated by the *wake* morning of the night it describes — the
+night of D−1→D is row-dated D, not D−1. That dating alone introduces no
+lag; the row already identifies the right night. The lag comes entirely
+from the clamp: `--to` is never today or later, clamping to yesterday
+(sync.py's own docstring: "today's steps/stress/body-battery are mid-day
+values; a row written now would stay permanently half-recorded"). So the
+row dated D — the night that ends *this* morning, on a naive read of
+"last night" — is not written until a run whose `--to` reaches D, which
+is the run on day D+1 at the earliest, never the run on day D itself.
+Checking the panel the morning after (D+1), the newest row available is
+therefore dated D, one full calendar day behind: `days_behind = 1` on a
+healthy daily cadence, and it only grows if a run is missed. **The title
+"Last night" has been inaccurate since it shipped in v1.26** — the clamp
+existed then too; this amendment did not introduce the lag, it corrects
+a title that was wrong from the start.
+
+**2. v1.29 made the inaccuracy worse — a real regression, not just a
+missed opportunity.** v1.26's Panel 1 was a dated value-list table: every
+row, including the current one, carried its own date on screen, so a
+reader who looked could see how old the number was even though the
+panel's title said otherwise. v1.29 replaced that table with three
+sparklines that draw no axis and print no date, falling back to a dated
+plain-text list only below three non-null points (binding rule 5) — not
+the common case once the FR70 accumulates nights. Once three or more
+nights exist, v1.29 left the panel with **no date visible anywhere**,
+strictly worse than v1.26 for judging whether the number on screen is
+current.
+
+**3. Fix: label the reading, don't touch the pipeline — binding.**
+`compute/metrics.py`'s `last_night()` gained `days_behind`
+(`as_of - <latest row's date>`, hand-checked in
+`compute/tests/test_today.py`) — computed here, not derived in the
+frontend, per CLAUDE.md rule 3. `LastNightPanel.tsx` now renders the
+reading's date next to the values, formatted with the existing
+`formatShortDate` "MM-DD" convention (§10), on every render, regardless
+of `days_behind`. When `days_behind` is more than 1,
+`lastNightCopy.ts`'s new `stalenessNote` adds one short factual line in
+the same place naming the gap (e.g. "3 days behind today.") — no alarm
+language, no adjective, same register as the panel's existing `noBandNote`.
+At the expected `days_behind = 1`, `stalenessNote` renders nothing,
+since a one-day lag under the clamp is not itself news. **The panel is
+retitled "Most recent night"** — accurate to what it actually shows,
+where "Last night" was not.
+
+**4. The never-write-today clamp is unchanged — a deliberate decision,
+not an oversight.** The clamp is correct: writing a mid-day row would
+permanently half-record steps/stress/body-battery for that date, a worse
+defect than a one-day-old reading. This repo is entering a four-week
+unattended window starting today (`RUNBOOK.md`), and the ingest pipeline
+that has to run unattended for four weeks is not touched on the last
+commit before that window — the fix stays entirely in the render layer,
+as instructed.
+
+---
+
 ## 1. What this is
 
 A private-by-design training dashboard — public source repo, privately-hosted
@@ -2494,7 +2567,7 @@ These are binding. The frontend must not recompute or reinterpret them.
 | `hrv_baseline` | 7-day mean vs 30-day mean, plus Garmin's own HRV Status when available. Requires ≥ 21 days on FR70 before rendering at all. |
 | `impact_mechanics` | Per run: `avg_cadence`, `avg_vertical_oscillation`, `avg_vertical_ratio`, joined to `daily.shin` at date + 1 and date + 2. |
 | `shin_series` | `daily.shin` joined to `rolling_7d_km` by date. **`NULL` is never coerced to `0`.** A missing day renders as a gap in the step series with a distinct unfilled marker on the date axis — not a value, not a zero. Every panel consuming shin declares its coverage as `n answered / n days in range`. **Added v1.13 — the §10 band threshold for shin's marker state: `shin = 0` is `in_band`; `shin` 1–3 is `out_of_band`; no row is `not_answered`.** Each entry also carries `understated_volume` (v1.7's pre-8-Aug-2026 floor-not-measurement flag, §8.3). Both are computed by `shin_series` itself, not derived by the frontend (CLAUDE.md rule 3). |
-| `last_night` | **Added v1.26, §8.1 Panel 1.** Sleep/RHR/HRV for the most recent `biometrics` row, plus a value list scoped to the *current device only* (reuses `rhr_baseline`/`hrv_baseline`'s own `_rows_on_current_device` filter — CLAUDE.md rule 5) and a computed `band_possible_from` date (`first_date_on_current_device + (HRV_BASELINE_MIN_DAYS − 1)` days). **Deliberately computes no band** — see the v1.26 amendment for the full reasoning. A null sensor reading stays null (rule 12). |
+| `last_night` | **Added v1.26, §8.1 Panel 1.** Sleep/RHR/HRV for the most recent `biometrics` row, plus a value list scoped to the *current device only* (reuses `rhr_baseline`/`hrv_baseline`'s own `_rows_on_current_device` filter — CLAUDE.md rule 5) and a computed `band_possible_from` date (`first_date_on_current_device + (HRV_BASELINE_MIN_DAYS − 1)` days). **Deliberately computes no band** — see the v1.26 amendment for the full reasoning. A null sensor reading stays null (rule 12). **`days_behind` added v1.30** (`as_of - <latest row's date>`) — lets the render layer state which night is shown and flag when the gap exceeds the clamp's normal one-day lag, see the v1.30 amendment. |
 | `session_for_date` | **Added v1.26, §8.1 Panel 2.** The single `sessions` row for a given date (`sessions.date` is unique, §5), narrowed to `session_type`/`purpose`/`prescription`/`done`. No row is `None`, a real state, not an error. |
 | `today_flag` | **Added v1.26, §8.1 Panel 3.** At most one of `{shin, illness, volume_ramp}`, evaluated in that order, first hit wins, `None` if nothing qualifies. Rule 1: `daily.shin > 0` today or yesterday (today first), **NULL is never a hit**. Rule 2: `daily.illness is True` today or yesterday (today first). Rule 3: completed rolling 7-day km (window ending **yesterday**, never today — "never project the current week forward") more than `TODAY_FLAG_VOLUME_RAMP_PCT` (10%, strict `>`) above the preceding completed 7-day window, via `rolling_7d_km`/`ramp_pct`. **Distinct from `ramp_pct`'s own row above**: that compares calendar Mon–Sun weeks (`weekly_km`, §8.2); this compares two trailing 7-day windows (`rolling_7d_km`) — same 10% tolerance, different question, not shared code. **Added v1.27 — rule 3 is suppressed entirely, falling through as a non-match, if either 7-day window contains any date before `UNDERSTATED_VOLUME_CUTOFF` (§7's own v1.7 floor-not-measurement note, same constant `shin_series` already reads).** No caveat, no warning render — see the v1.27 amendment for why a caveated number was rejected. Suppression lifts 2026-08-22, once both windows clear the cutoff. |
 
@@ -2544,7 +2617,7 @@ Read-only, fully automatic. Ten seconds, once, in the morning.
 
 | Panel | Answers | Encoding |
 |---|---|---|
-| Last night | Sleep, RHR, HRV | **Built v1.26 without a band — deferred, see the v1.26 amendment.** Three raw values, a current-device-era-only value list, and one note stating no band exists yet, that Amazfit baselines don't transfer, and the computed date a band becomes possible. Gains the originally-specified "vs *his* band" once `rhr_baseline`/`hrv_baseline` (§7) have enough FR70 nights. |
+| Most recent night (titled "Last night" v1.26–v1.29, renamed v1.30 — see the v1.30 amendment) | Sleep, RHR, HRV | **Built v1.26 without a band — deferred, see the v1.26 amendment.** Three raw values, a current-device-era-only value list, and one note stating no band exists yet, that Amazfit baselines don't transfer, and the computed date a band becomes possible. Gains the originally-specified "vs *his* band" once `rhr_baseline`/`hrv_baseline` (§7) have enough FR70 nights. **v1.30:** the reading's date is always shown next to the values, and a plain staleness line appears when `days_behind` exceeds the clamp's normal one-day lag — the panel never implies the reading is more current than it is. |
 | Today's session | What to do | Pulled from `sessions` for the exact date: `session_type`, `purpose`, `prescription`, `done`. No row for today renders as plain text saying so. |
 | Flag | Anything needing a decision | **At most one**, evaluated shin → illness → volume ramp, first hit wins (§7 `today_flag`, v1.26 amendment). If nothing qualifies, the slot is absent, not empty. **The volume-ramp rule is suppressed (not caveated) while either comparison window touches pre-8-Aug-2026 data — v1.27 amendment.** |
 

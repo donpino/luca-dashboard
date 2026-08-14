@@ -45,3 +45,13 @@ export function formatUnitRange(min: number, max: number, unit: string): string 
 export function formatShortDate(iso: string): string {
   return iso.slice(5)
 }
+
+// §8.1 v1.30 amendment, binding wording: `daysBehind` comes straight off
+// `last_night.days_behind` (CLAUDE.md rule 3 — no date math here). 1 is
+// the expected steady state under ingest/sync.py's never-write-today
+// clamp, so it says nothing; anything more names the gap plainly, no
+// alarm language, no adjective.
+export function stalenessNote(daysBehind: number): string | null {
+  if (daysBehind <= 1) return null
+  return `${daysBehind} days behind today.`
+}

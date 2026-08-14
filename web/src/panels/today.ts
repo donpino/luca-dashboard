@@ -19,6 +19,12 @@ export interface LastNight extends LastNightNight {
   device_since: string
   // Every night on the current device up to and including `date`.
   values: LastNightNight[]
+  // The build date minus `date`, computed in compute/metrics.py's
+  // last_night() (CLAUDE.md rule 3 — the frontend must not derive this
+  // itself). 1 on every normal day under ingest/sync.py's never-write-
+  // today clamp (§8.1 v1.30 amendment); higher only if a sync run was
+  // missed.
+  days_behind: number
   // Computed date the ~21-night HRV Status window is first satisfied on
   // this device — no band exists before this date, and none is rendered
   // here even after it (§8.1 v1.26: this panel defers the band, it

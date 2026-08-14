@@ -6,6 +6,7 @@ import {
   formatUnit,
   formatUnitRange,
   noBandNote,
+  stalenessNote,
 } from './lastNightCopy'
 
 describe('noBandNote', () => {
@@ -56,5 +57,24 @@ describe('formatUnitRange', () => {
 describe('formatShortDate', () => {
   it('drops the year, matching the shin panel axis-date convention', () => {
     expect(formatShortDate('2026-08-13')).toBe('08-13')
+  })
+})
+
+describe('stalenessNote', () => {
+  it('says nothing at the expected one-day clamp lag', () => {
+    expect(stalenessNote(1)).toBeNull()
+  })
+
+  it('says nothing when the reading is from today', () => {
+    expect(stalenessNote(0)).toBeNull()
+  })
+
+  it('names the gap plainly when more than one day behind', () => {
+    expect(stalenessNote(3)).toBe('3 days behind today.')
+  })
+
+  it('carries no alarm language or adjective', () => {
+    const text = stalenessNote(5)!
+    expect(text.toLowerCase()).not.toMatch(/stale|old|warning|missed|alert/)
   })
 })

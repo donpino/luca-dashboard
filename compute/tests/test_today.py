@@ -67,6 +67,26 @@ def test_last_night_band_possible_from_is_first_device_date_plus_20_days():
     assert result["band_possible_from"] == date(2026, 8, 28)
 
 
+def test_last_night_days_behind_is_one_on_a_normal_day():
+    # The expected steady state under ingest/sync.py's never-write-today
+    # clamp (§8.1 v1.30 amendment): as_of - latest row's date == 1.
+    biometrics = [_bio("2026-08-12", "fr70", sleep=420, rhr=44, hrv=52)]
+    result = last_night(biometrics, date(2026, 8, 13))
+    assert result["days_behind"] == 1
+
+
+def test_last_night_days_behind_grows_when_sync_has_missed_runs():
+    biometrics = [_bio("2026-08-10", "fr70", sleep=420, rhr=44, hrv=52)]
+    result = last_night(biometrics, date(2026, 8, 13))
+    assert result["days_behind"] == 3
+
+
+def test_last_night_days_behind_zero_when_row_matches_as_of():
+    biometrics = [_bio("2026-08-13", "fr70", sleep=420, rhr=44, hrv=52)]
+    result = last_night(biometrics, date(2026, 8, 13))
+    assert result["days_behind"] == 0
+
+
 def test_last_night_no_rows_is_insufficient_data():
     result = last_night([], date(2026, 8, 9))
     assert isinstance(result, InsufficientData)

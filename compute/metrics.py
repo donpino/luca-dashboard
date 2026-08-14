@@ -486,12 +486,21 @@ def last_night(biometrics: list[dict], as_of: date) -> dict | InsufficientData:
     crosses the Amazfit/FR70 break, and no cap beyond that — the era is
     short by construction today, and once it grows past "small" a real
     band replaces this list entirely (see the v1.26 amendment).
+
+    Also returns `days_behind` — `as_of` minus the latest row's date.
+    DASHBOARD_SPEC.md's v1.30 amendment: `ingest/sync.py`'s never-write-
+    today clamp means the night that just ended is never in `biometrics`
+    yet when this runs, so `days_behind` is 1 on every normal day, not 0.
+    The render layer uses this to label which night is shown and to say
+    plainly when it is more than one day stale — computed here, not in
+    the frontend, per CLAUDE.md rule 3.
     """
     resolved = _rows_on_current_device(biometrics, as_of)
     if resolved is None:
         return InsufficientData(reason="no biometrics rows on or before as_of", n=0, required=1)
     device, device_rows = resolved
     latest = max(device_rows, key=lambda r: _to_date(r["date"]))
+    latest_date = _to_date(latest["date"])
     first_date = min(_to_date(r["date"]) for r in device_rows)
     values = sorted(
         (
@@ -506,13 +515,14 @@ def last_night(biometrics: list[dict], as_of: date) -> dict | InsufficientData:
         key=lambda r: r["date"],
     )
     return {
-        "date": _to_date(latest["date"]),
+        "date": latest_date,
         "sleep_total_min": latest.get("sleep_total_min"),
         "rhr": latest.get("rhr"),
         "hrv_overnight": latest.get("hrv_overnight"),
         "device": device,
         "device_since": first_date,
         "values": values,
+        "days_behind": (as_of - latest_date).days,
         # First date the elapsed-day count reaches HRV_BASELINE_MIN_DAYS —
         # same "days elapsed since first row on this device" convention as
         # hrv_baseline's own days_elapsed, not a count of nights with data.

@@ -1,8 +1,11 @@
-// §8.1 Panel 1 — "Last night". Presentational only: every value and every
-// date comes straight from web/public/data/today.json's last_night field
-// (compute/metrics.py's last_night(), CLAUDE.md rule 3) — this component
-// formats and lays out, it does not compute. No band is drawn here — see
-// noBandNote's docstring and DASHBOARD_SPEC.md's v1.26 amendment for why.
+// §8.1 Panel 1 — "Most recent night" (retitled from "Last night" in the
+// v1.30 amendment; see that amendment for why the old title was
+// inaccurate from v1.26 onward). Presentational only: every value and
+// every date comes straight from web/public/data/today.json's last_night
+// field (compute/metrics.py's last_night(), CLAUDE.md rule 3) — this
+// component formats and lays out, it does not compute. No band is drawn
+// here — see noBandNote's docstring and DASHBOARD_SPEC.md's v1.26
+// amendment for why.
 //
 // v1.29 amendment: the value list became three sparklines, one per metric,
 // hand-rolled inline SVG (no charting library — Today stays ECharts-free).
@@ -13,8 +16,15 @@
 // direction word — the shape is all that's shown (§3.1); and below three
 // non-null points the metric renders as plain text, since two points drawn
 // as a line is itself a trend claim.
+//
+// v1.30 amendment: ingest/sync.py's never-write-today clamp means the row
+// shown here is never actually last night's — it is always at least one
+// day old, and older still if a sync run was missed (§8.1 v1.30). The
+// reading's date and, when the gap exceeds one day, a plain staleness
+// line are rendered next to the values so a stale number never looks
+// like this morning's.
 
-import { formatMinutes, formatMinutesRange, formatShortDate, formatUnit, formatUnitRange, noBandNote } from './lastNightCopy'
+import { formatMinutes, formatMinutesRange, formatShortDate, formatUnit, formatUnitRange, noBandNote, stalenessNote } from './lastNightCopy'
 import { hasEnoughPointsForLine, sparklineExtent, sparklinePoints, sparklineSegments } from './sparkline'
 import type { LastNight, LastNightNight } from './today'
 
@@ -108,13 +118,19 @@ function MetricRow({ metric, current, values }: { metric: MetricConfig; current:
 }
 
 export default function LastNightPanel({ data }: { data: LastNight | null }) {
+  const staleness = data === null ? null : stalenessNote(data.days_behind)
   return (
-    <section className="panel" aria-label="Last night">
-      <h2 className="panel__title">Last night</h2>
+    <section className="panel" aria-label="Most recent night">
+      <h2 className="panel__title">Most recent night</h2>
       {data === null ? (
         <p className="status-text status-text--muted">No biometrics recorded yet.</p>
       ) : (
         <>
+          <p className="mono panel__subtitle">
+            {formatShortDate(data.date)}
+            {staleness && ` · ${staleness}`}
+          </p>
+
           <div className="last-night__rows">
             {METRICS.map((metric) => (
               <MetricRow key={metric.key} metric={metric} current={data[metric.key]} values={data.values} />
