@@ -850,6 +850,183 @@ textarea {
   font-size: 14px;
 }
 
+/* ---- week grid (§8.2 desktop layout, v1.33) ----
+   Phone default: plain stack. >=768px: pairs Planned-vs-actual with
+   Ramp, and the two still-unbuilt laps-dependent panels (Easy-band
+   compliance, Medio control) with each other — same two-column shell as
+   .today-grid (§8.1 v1.32), kept as its own class so each page's
+   breakpoint stays independent (see this file's header comment). */
+.week-grid {
+  display: flex;
+  flex-direction: column;
+}
+
+@media (min-width: 768px) {
+  .week-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    align-items: start;
+    column-gap: 20px;
+  }
+
+  .week-grid > .panel {
+    margin-bottom: 0;
+  }
+}
+
+/* ---- planned vs actual km (§8.2) ---- */
+
+.week-stat-pair {
+  display: flex;
+  gap: 28px;
+  margin: 0;
+}
+
+.week-stat-pair__item {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.week-stat-pair__item dt {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.week-stat-pair__item dd {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 600;
+}
+
+/* ---- ramp % (§8.2) ---- */
+
+.week-ramp__value {
+  margin: 0 0 4px;
+  font-size: 24px;
+  font-weight: 600;
+}
+
+.week-ramp__detail {
+  margin: 0;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+/* ---- session compliance grid (§8.2, v1.33) ----
+   Five states, each with its own non-colour marker so the grid reads
+   without colour (§10): Yes = solid, Partial = hatch, No = hollow,
+   Pending = dashed hairline, no session row = blank marker + its own
+   "No plan" label — a fifth, distinct state, never collapsed into "No"
+   (a logged, missed session) or left blank with no label at all. */
+.compliance-grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 6px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.compliance-cell {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 8px 2px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  text-align: center;
+}
+
+.compliance-cell__day {
+  font-size: 11px;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+}
+
+.compliance-cell__date {
+  font-size: 10px;
+  color: var(--muted);
+}
+
+.compliance-cell__marker {
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+}
+
+.compliance-cell--yes .compliance-cell__marker {
+  background: var(--text);
+}
+
+.compliance-cell--partial .compliance-cell__marker {
+  border-radius: 3px;
+  background-image: repeating-linear-gradient(
+    45deg,
+    var(--text) 0,
+    var(--text) 1px,
+    transparent 1px,
+    transparent 4px
+  );
+}
+
+.compliance-cell--no .compliance-cell__marker {
+  background: transparent;
+  border: 2px solid var(--text);
+}
+
+.compliance-cell--pending .compliance-cell__marker {
+  background: transparent;
+  border: 1px dashed var(--muted);
+}
+
+.compliance-cell--no-row .compliance-cell__marker {
+  background: transparent;
+  border: none;
+}
+
+.compliance-cell__label {
+  font-size: 10px;
+  color: var(--muted);
+  line-height: 1.3;
+}
+
+/* ---- wellness summary (§8.2, v1.33) ----
+   Each mean sits directly above its own night count, so a mean over a
+   few nights never reads like a mean over 7 (§8.2). */
+.week-wellness-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+  margin: 0;
+}
+
+.week-wellness-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.week-wellness-stat__label {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.week-wellness-stat__value {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.week-wellness-stat__coverage {
+  margin: 0;
+  font-size: 11px;
+  color: var(--muted);
+}
+
 /* ---- check-in block (§8.2 "Generate check-in") ---- */
 
 .checkin-block {

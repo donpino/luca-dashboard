@@ -1,4 +1,4 @@
-# Training Dashboard — Build Spec v1.32
+# Training Dashboard — Build Spec v1.33
 
 **Athlete:** Luca · **Campaign:** middle-distance, Foundation block → 2032
 **Status:** Phase 1 complete — `daily` table, RLS/grants, `/log`,
@@ -128,6 +128,22 @@ layout above 768px (two-column Today, a widened and capped content area)
 instead of a 480px column stranded beside the sidebar. `/log` is
 untouched and still grows no breakpoint of its own.** See the v1.32
 amendment below.
+**§8.2 gains four built panels — Planned vs actual km, Ramp %, Session
+compliance grid, and Wellness summary — replacing four of the six
+`EmptyPanel`s v1.25 left as shells.** Planned vs actual km and Ramp %
+read `actual_km`/`planned_km`/`prev_actual_km`/`ramp_pct` straight off
+`week.json` and carry the same understated-volume caveat the check-in
+block carries when the flag is set. The session compliance grid renders
+all seven `sessions[]` days, Monday first, in five non-colour-coded
+states — Yes, Partial, No, Pending, and a fifth state for a day with no
+`sessions` row at all, which is never collapsed into "No." Wellness
+summary states each of sleep/RHR/HRV as a mean beside its own night
+count, and shin as a max beside its answered-day coverage, so a partial
+week never reads like a full one; neither compliance nor wellness carries
+the understated-volume caveat, which describes the volume/ramp figures
+only. Easy-band compliance and Medio control remain `EmptyPanel`s — both
+need the `laps` table, still Phase 1.5 (§12). See the v1.33 amendment
+below.
 · **Date:** 14 Aug 2026
 
 This document is the contract. It goes in the repo root alongside `CLAUDE.md`.
@@ -2226,6 +2242,92 @@ when non-null. No change to `sparkline.ts`, `LastNightPanel.tsx`'s
 geometry/hover logic, `ShinVolumePanel.tsx`, `shinVolumeChart.ts`, or any
 `compute/`/`ingest/` file.
 
+**Amendments in v1.33 (14 Aug 2026)** — four of §8.2's six panels built:
+Planned vs actual km, Ramp %, Session compliance grid, Wellness summary.
+Render-layer only — no `compute/`, no `ingest/`, no migration, no
+`week.json` shape change; every number on screen traces to the same
+`week_checkin()` (v1.28) as the check-in block. Easy-band compliance and
+Medio control stay `EmptyPanel`s (§12 Phase 1.5, `laps` table).
+
+**1. Planned vs actual km and Ramp % — `actual_km`/`planned_km` and
+`ramp_pct`/`prev_actual_km`, read as-is.** A week with no `weekly` row
+states planned is unknown, never 0 or an omitted line — same contract
+`volumeLine` already carried for the check-in block. A null `ramp_pct`
+(no previous-week volume) states unknown, never 0% or a comparison
+against a week that doesn't exist. Both panels carry the same caveat the
+check-in block's `dataQualityLine` carries when `understated_volume` is
+set: the volume figures are a floor, not a measurement, and the ramp %
+is not a reliable comparison — same substance, restated in plain text
+(not the check-in block's `**Note:**`-prefixed Markdown, which is written
+for a paste destination this panel isn't) by a sibling helper,
+`understatedVolumeNote` (`weekPanelsCopy.ts`).
+
+**2. Session compliance grid — seven cells, Monday first, one per
+`sessions[]` entry, in five states, none colour-coded (§10).** Four come
+from `done`: Yes, Partial, No, Pending. **The fifth is a day with no
+`sessions` row at all — binding, not an implementation detail: this is
+an absent plan, and it must never be collapsed into "No," which is a
+logged, missed session.** The two read completely differently to a coach
+skimming the week: a string of "No" cells says sessions were prescribed
+and skipped; a string of the fifth state says no plan existed for those
+days at all, a scheduling gap rather than a compliance one. Each state
+gets its own marker treatment — solid fill (Yes), diagonal hatch
+(Partial), hollow outline (No), dashed hairline (Pending), and no marker
+at all paired with its own "No plan" label (the fifth state) — plus its
+own text label underneath, so the grid reads without colour and without
+relying on the marker shape alone. No caveat on this panel — the
+understated-volume flag describes the volume/ramp figures, not session
+logging.
+
+**3. Wellness summary — sleep/RHR/HRV as a mean beside its own night
+count, shin as a max beside its own answered-day coverage.** A missing
+`biometrics` row is excluded from both the mean and the count for that
+metric, never averaged as 0 (§5's non-wear rule); a null mean renders as
+"no data," never 0. Each metric's count travels with its mean specifically
+so a mean over three nights is never mistaken for a mean over seven — the
+same reasoning `week_checkin()`'s `_mean_and_count` already encodes, now
+visible on screen rather than implicit. `shin_max` is the max over
+*answered* days only, shown as `n/7 answered`; a null max (nothing
+answered that week) renders as "no data," never 0 — §5's null rule,
+CLAUDE.md rule 12, distinct from a real 0 (assessed, no pain), confirmed
+against live data where `shin_max: 0` correctly rendered "max 0," not
+"no data." No caveat on this panel either, for the same reason as the
+compliance grid.
+
+**Verification.** Checked in the browser at a 390–500px phone width and
+a 1440px desktop width, against both the live `week.json` (fetched via
+`compute/build_data.py` against the real Supabase project, which happened
+to have `understated_volume: true` for the current week — both caveats
+rendered) and a locally-edited copy of that same gitignored build
+artifact exercising the No and no-row compliance states, which the live
+week didn't contain that day. At 1440px: Planned vs actual km and Ramp %
+sit side by side via `.week-grid`, both showing the caveat; the
+compliance grid renders all seven cells in one row with visibly distinct
+markers; Easy-band compliance and Medio control sit paired below,
+unchanged; Wellness summary renders its four stats two-by-two; the
+check-in block still renders and its copy is unaffected. At phone width:
+`.week-grid` collapses to a single column (Planned vs actual km and Ramp
+% stack, as do the two remaining `EmptyPanel`s), the compliance grid
+still fits seven compact cells in one row, and the wellness grid stays
+two columns. All five compliance states were visually confirmed distinct
+without colour: solid, hatch, hollow, dashed, and blank-with-"No plan."
+
+**Implementation.** `web/src/panels/weekPanelsCopy.ts` (new, pure,
+tested): formatting and state helpers for all four panels, reusing
+`formatKm`/`formatPct` (now exported from `checkinCopy.ts`) and
+`formatMinutes` (`lastNightCopy.ts`) rather than parallel formatters.
+`PlannedActualPanel.tsx`, `RampPanel.tsx`, `ComplianceGridPanel.tsx`,
+`WellnessPanel.tsx` (new, presentational only). `Week.tsx`: wires the
+four new panels in against `week.json`'s existing fetch, with a shared
+`DataPanelStatus` loading/error shell replacing the duplicated inline
+markup the check-in panel's own loading/error states used before.
+`global.css`: `.week-grid` (two-column desktop shell, mirrors
+`.today-grid`), `.week-stat-pair`, `.week-ramp__*`, `.compliance-grid`
+and `.compliance-cell--*` (five marker treatments), `.week-wellness-grid`
+and `.week-wellness-stat__*`. No change to `checkinCopy.ts`'s existing
+behaviour (`formatKm`/`formatPct` exported, not modified) or to any
+`compute/`/`ingest/` file.
+
 ---
 
 ## 1. What this is
@@ -2843,7 +2945,7 @@ The only thing Luca touches is the `/log` link.
 |---|---|
 | Planned vs actual km | Did the week happen |
 | Ramp % | Is the build inside tolerance |
-| Session compliance grid | 7 cells, done / partial / missed |
+| Session compliance grid | 7 cells, Yes / Partial / No / Pending / no plan |
 | Easy-band compliance | Were easy days easy |
 | Medio control | Was the quality session raced |
 | Wellness summary | Sleep mean, RHR, HRV, shin max, outlier nights |
@@ -2911,6 +3013,43 @@ Every number in the block is computed and tested in
 `compute/metrics.py`'s `week_checkin()`; the frontend
 (`web/src/panels/checkinCopy.ts`) only formats the returned dict into
 the Markdown block above (CLAUDE.md rule 3).
+
+**Planned vs actual km, Ramp %, Session compliance grid, Wellness
+summary — content, binding, added v1.33.** All four read the same
+`week.json` the check-in block already fetches; no new field, no second
+formula (CLAUDE.md rule 3). See the v1.33 amendment for the full
+rendering/verification account — summarised here as the binding content
+spec, same standing as the check-in block above.
+
+- **Planned vs actual km / Ramp %** carry `actual_km`/`planned_km` and
+  `ramp_pct`/`prev_actual_km` exactly as the check-in block's Volume/Ramp
+  lines do, including the unknown-not-0 and unknown-not-0%-or-∞%
+  contracts. Both panels carry the same understated-volume caveat the
+  check-in block carries, restated in plain text for the panel UI rather
+  than the check-in block's paste-ready Markdown.
+- **Session compliance grid** renders `sessions[]` as seven cells,
+  Monday first. **Five states, not four: Yes, Partial, No, Pending, and
+  a day with no `sessions` row at all — the fifth state is binding, not
+  an implementation detail, and must never be collapsed into "No."** No
+  row means no plan existed for that day; "No" means a plan existed and
+  was logged as not done. Each state gets its own non-colour marker
+  (§10) plus its own text label, so the grid is legible without colour
+  and without depending on the marker alone. No understated-volume
+  caveat — the flag describes the volume/ramp figures, not session
+  logging.
+- **Wellness summary** states sleep/RHR/HRV each as a mean beside its own
+  night count (never just the mean alone — a mean over 3 nights must not
+  read like a mean over 7), and shin as a max beside `n/7 answered`
+  coverage. A null mean is "no data," never 0 (§5's non-wear rule); a
+  null shin max means nothing was answered that week and is never
+  coerced to 0 (§5's null rule, CLAUDE.md rule 12) — distinct from a real
+  `shin_max` of 0, which is an assessed, pain-free week. No
+  understated-volume caveat on this panel either, for the same reason as
+  the compliance grid.
+
+Easy-band compliance and Medio control remain `EmptyPanel`s — both need
+per-run split/segment data from the `laps` table, still Phase 1.5 (§12),
+which does not exist yet.
 
 ### 8.3 Block — the mesocycle
 | Panel | Answers |

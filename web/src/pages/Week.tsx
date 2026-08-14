@@ -1,15 +1,43 @@
-// §8.2 — the coach surface. "Generate check-in" is built (v1.28); the
-// other six panels stay unbuilt shells until their own commits, same
-// nav-shell convention as the rest of this page (v1.25).
+// §8.2 — the coach surface. Planned vs actual km, Ramp %, Session
+// compliance grid, and Wellness summary are built (v1.33), reading
+// week.json directly (CLAUDE.md rule 3). Easy-band compliance and Medio
+// control stay EmptyPanels — they need the laps table (Phase 1.5), which
+// does not exist yet. Generate check-in was built in v1.28.
 import { useEffect, useState } from 'react'
 import CheckinPanel from '../panels/CheckinPanel'
+import ComplianceGridPanel from '../panels/ComplianceGridPanel'
 import EmptyPanel from '../panels/EmptyPanel'
+import PlannedActualPanel from '../panels/PlannedActualPanel'
+import RampPanel from '../panels/RampPanel'
+import WellnessPanel from '../panels/WellnessPanel'
 import type { WeekResponse } from '../panels/week'
 
 type LoadState =
   | { status: 'loading' }
   | { status: 'error' }
   | { status: 'ready'; data: WeekResponse }
+
+// Shared loading/error shell for the four panels below that need
+// week.json before they can render anything — same copy the check-in
+// panel's own loading/error states already used.
+function DataPanelStatus({
+  title,
+  status,
+}: {
+  title: string
+  status: 'loading' | 'error'
+}) {
+  return (
+    <section className="panel" aria-label={title}>
+      <h2 className="panel__title">{title}</h2>
+      {status === 'loading' ? (
+        <p className="status-text status-text--muted">Loading…</p>
+      ) : (
+        <p className="status-text status-text--error">Couldn&rsquo;t load week.json.</p>
+      )}
+    </section>
+  )
+}
 
 export default function Week() {
   const [state, setState] = useState<LoadState>({ status: 'loading' })
@@ -34,25 +62,38 @@ export default function Week() {
 
   return (
     <>
-      <EmptyPanel title="Planned vs actual km" />
-      <EmptyPanel title="Ramp %" />
-      <EmptyPanel title="Session compliance grid" />
-      <EmptyPanel title="Easy-band compliance" />
-      <EmptyPanel title="Medio control" />
-      <EmptyPanel title="Wellness summary" />
-      {state.status === 'loading' && (
-        <section className="panel" aria-label="Generate check-in">
-          <h2 className="panel__title">Generate check-in</h2>
-          <p className="status-text status-text--muted">Loading…</p>
-        </section>
+      <div className="week-grid">
+        {state.status === 'ready' ? (
+          <>
+            <PlannedActualPanel data={state.data} />
+            <RampPanel data={state.data} />
+          </>
+        ) : (
+          <>
+            <DataPanelStatus title="Planned vs actual km" status={state.status} />
+            <DataPanelStatus title="Ramp %" status={state.status} />
+          </>
+        )}
+      </div>
+      {state.status === 'ready' ? (
+        <ComplianceGridPanel data={state.data} />
+      ) : (
+        <DataPanelStatus title="Session compliance grid" status={state.status} />
       )}
-      {state.status === 'error' && (
-        <section className="panel" aria-label="Generate check-in">
-          <h2 className="panel__title">Generate check-in</h2>
-          <p className="status-text status-text--error">Couldn&rsquo;t load week.json.</p>
-        </section>
+      <div className="week-grid">
+        <EmptyPanel title="Easy-band compliance" />
+        <EmptyPanel title="Medio control" />
+      </div>
+      {state.status === 'ready' ? (
+        <WellnessPanel data={state.data} />
+      ) : (
+        <DataPanelStatus title="Wellness summary" status={state.status} />
       )}
-      {state.status === 'ready' && <CheckinPanel data={state.data} />}
+      {state.status === 'ready' ? (
+        <CheckinPanel data={state.data} />
+      ) : (
+        <DataPanelStatus title="Generate check-in" status={state.status} />
+      )}
     </>
   )
 }

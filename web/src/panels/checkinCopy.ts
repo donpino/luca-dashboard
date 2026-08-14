@@ -15,11 +15,14 @@ import type { WeekResponse } from './week'
 
 const WEEKDAY_LABELS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
 
-function formatKm(value: number): string {
+// Exported for reuse by weekPanelsCopy.ts (§8.2 v1.33's Planned-vs-actual
+// and Ramp panels) — one km/percent formatter each, not a parallel one
+// per panel.
+export function formatKm(value: number): string {
   return `${value.toFixed(1)} km`
 }
 
-function formatPct(value: number): string {
+export function formatPct(value: number): string {
   const sign = value >= 0 ? '+' : ''
   return `${sign}${(value * 100).toFixed(0)}%`
 }
