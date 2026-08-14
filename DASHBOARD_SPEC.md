@@ -1,4 +1,4 @@
-# Training Dashboard — Build Spec v1.28
+# Training Dashboard — Build Spec v1.29
 
 **Athlete:** Luca · **Campaign:** middle-distance, Foundation block → 2032
 **Status:** Phase 1 complete — `daily` table, RLS/grants, `/log`,
@@ -102,6 +102,13 @@ pre-FR70 tracking-break hazard v1.27 suppressed in `today_flag` gets a
 caveat line here instead, deliberately — see the v1.28 amendment below
 for why the two panels take different fixes for the same hazard. The
 other six §8.2 panels remain `EmptyPanel`s.
+**§8.1 Panel 1's value list is now three sparklines** — sleep total, RHR,
+HRV overnight, hand-rolled inline SVG, no charting library. Each states
+its own min/max in text beside it, a null reading breaks the line rather
+than bridging it, and a metric with fewer than three non-null points
+renders as text instead of a line. No trend line, slope, arrow, or
+direction word anywhere on the panel (§3.1); the v1.26 no-band decision
+is unchanged. See the v1.29 amendment below.
 · **Date:** 14 Aug 2026
 
 This document is the contract. It goes in the repo root alongside `CLAUDE.md`.
@@ -1863,6 +1870,73 @@ the two weeks the ramp needs rather than fetching whole tables.
 checkinCopy.ts` formats the dict into the Markdown block above and
 `web/src/panels/week.ts` mirrors the JSON contract — the same
 type/copy/render/build-step division v1.26 established for §8.1.
+
+---
+
+**Amendments in v1.29 (14 Aug 2026)** — §8.1 Panel 1's value list (v1.26)
+replaced with three sparklines, one each for sleep total, RHR, and HRV
+overnight, so the shape of the current-device era is visible at a glance
+instead of a list of rows the reader has to scan by eye. No `compute/
+metrics.py` change: `last_night.values` (v1.26) already carried every
+field needed, already scoped to the current device only, already
+preserving a null sensor reading as `null` rather than coercing it to
+zero (CLAUDE.md rule 12). This is a render-layer change only.
+
+**1. Each sparkline states its own min and max as text beside it, with
+units — binding, not decoration.** A sparkline auto-scaled to its own
+box makes any spread, however small, fill the full height of the chart;
+a 3 bpm RHR range and a 30 bpm range draw identically tall without the
+numbers alongside them, and the shape is unreadable, actively
+misleading, without that scale in view. `web/src/panels/lastNightCopy.ts`
+gained `formatMinutesRange`/`formatUnitRange`, stating the unit once, at
+the end, matching `formatMinutes`/`formatUnit`'s existing convention.
+
+**2. No trend line, slope, arrow, direction word, or colour-by-direction
+— binding, ties directly to §3.1.** The panel draws the recorded shape
+and nothing else. A week or so of nights on a brand-new device (§8.1
+v1.26: the FR70 has been worn since 8 Aug) is not a sample a trend claim
+can stand on, and §3.1 already forbids self-level judgement anywhere in
+this dashboard — "is this line going up or down" is exactly the kind of
+feedback Kluger & DeNisi found net-negative when aimed at the self
+rather than the task. This is the same reasoning v1.26 gave for shipping
+Panel 1 with no reference band at all, applied to the new sparklines: an
+un-earned claim about direction is worse than no claim.
+
+**3. The v1.26 no-band decision is unchanged by this amendment.** The
+sparklines are an unscaled shape, not a lane (§10) — no shaded channel,
+no target, nothing to fall in or out of. Panel 1 still states once, in
+its existing note, that no band exists yet and roughly when one becomes
+possible; that note's wording and its binding status are untouched here.
+
+**4. Missing nights are gaps, not zeros and not interpolated points —
+binding, CLAUDE.md rule 12 applied to a line chart specifically.** A
+null sensor reading breaks the polyline rather than pulling it to the
+floor or drawing a straight bridge across the missing night, which would
+misrepresent a gap in data as a real, if extreme, reading. Implemented
+as `sparklineSegments` in the new `web/src/panels/sparkline.ts`: each
+contiguous run of non-null values becomes its own `<polyline>`, so a
+null renders as visible empty space between segments.
+
+**5. Fewer than three non-null points renders as text, not a line —
+binding.** Two points drawn as a line is a slope, and a slope is a
+trend claim rule 2 above already forbids; there is no way to draw a
+two-point line that doesn't imply direction. `hasEnoughPointsForLine`
+(same file) gates this per metric independently — Sleep can render as a
+line while RHR, with fewer non-null nights, falls back to a plain
+comma-separated value list, dated, in the same row.
+
+**Implementation.** Hand-rolled inline SVG — `web/src/panels/
+sparkline.ts` (`sparklineExtent`, `sparklineSegments`,
+`hasEnoughPointsForLine`, `sparklinePoints`, all pure and unit-tested,
+including the null/gap and fewer-than-three-points cases) plus a small
+`Sparkline` component local to `LastNightPanel.tsx`. **No ECharts
+import** — Today stays off the charting library the Block page already
+loads, since Today is the daily-use landing tab and bundle weight there
+matters most (§4). Three stacked rows (label, current value, sparkline
+or fallback text, min/max), phone-first, matching §9's existing panel
+conventions. Colour carries no information here — a single `--azzurro`
+line per chart, readable in grayscale, per §10's "the line carries the
+information, hue carries none of it."
 
 ---
 

@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest'
-import { formatMinutes, formatShortDate, formatUnit, noBandNote } from './lastNightCopy'
+import {
+  formatMinutes,
+  formatMinutesRange,
+  formatShortDate,
+  formatUnit,
+  formatUnitRange,
+  noBandNote,
+} from './lastNightCopy'
 
 describe('noBandNote', () => {
   it('names the FR70/Amazfit gap and the computed eligibility date, never an Amazfit number', () => {
@@ -31,6 +38,18 @@ describe('formatUnit', () => {
   it('appends the unit to a real value, including a real zero', () => {
     expect(formatUnit(46, ' bpm')).toBe('46 bpm')
     expect(formatUnit(0, ' bpm')).toBe('0 bpm')
+  })
+})
+
+describe('formatMinutesRange', () => {
+  it('states the unit once, at the end, not after each value', () => {
+    expect(formatMinutesRange(391, 471)).toBe('6h 31m–7h 51m')
+  })
+})
+
+describe('formatUnitRange', () => {
+  it('states the unit once, at the end, not after each value', () => {
+    expect(formatUnitRange(41, 44, ' bpm')).toBe('41–44 bpm')
   })
 })
 

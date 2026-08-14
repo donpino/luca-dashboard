@@ -29,6 +29,17 @@ export function formatUnit(value: number | null, unit: string): string {
   return value === null ? '—' : `${value}${unit}`
 }
 
+// Min/max labels beside each §8.1 v1.29 sparkline — unit stated once, at
+// the end, not after both numbers (binding rule 1: a sparkline scaled to
+// its own box misreads without its own min/max in view).
+export function formatMinutesRange(min: number, max: number): string {
+  return `${formatMinutes(min)}–${formatMinutes(max)}`
+}
+
+export function formatUnitRange(min: number, max: number, unit: string): string {
+  return `${min}–${max}${unit}`
+}
+
 // "MM-DD" to match shinVolumeChart's axis-date convention (§10: mono for
 // all figures, no year needed — the value list never spans a year).
 export function formatShortDate(iso: string): string {

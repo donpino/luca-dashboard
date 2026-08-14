@@ -603,20 +603,26 @@ textarea {
   opacity: 0.7;
 }
 
-/* ---- last night (§8.1 panel 1) ---- */
+/* ---- last night (§8.1 panel 1, sparklines added v1.29) ---- */
 
-.last-night__values {
-  display: flex;
-  gap: 20px;
-  list-style: none;
-  margin: 0 0 12px;
-  padding: 0;
-}
-
-.last-night__values li {
+.last-night__rows {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 14px;
+  margin-bottom: 12px;
+}
+
+.last-night__row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.last-night__row-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
 }
 
 .last-night__label {
@@ -624,27 +630,55 @@ textarea {
   color: var(--muted);
 }
 
-.last-night__values .mono {
+.last-night__row-value {
   font-size: 18px;
   font-weight: 600;
 }
 
-.last-night__history {
+.last-night__row-chart {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+/* Fixed height so a two-night series and a full device-era series read at
+   the same scale of attention — width fills the row via the SVG's own
+   viewBox + preserveAspectRatio="none" (§9's fixed-scale convention,
+   reused from .panel__chart). */
+.last-night__spark {
   width: 100%;
-  border-collapse: collapse;
+  height: 28px;
+  flex: 1;
+}
+
+.last-night__spark-line {
+  fill: none;
+  stroke: var(--azzurro);
+  stroke-width: 1.5;
+  vector-effect: non-scaling-stroke;
+}
+
+.last-night__spark-dot {
+  fill: var(--azzurro);
+}
+
+/* Binding rule 1 (v1.29): every sparkline states its own min/max in text,
+   beside it — a box scaled to its own data misreads a small spread as a
+   big one without the numbers in view. */
+.last-night__row-range {
+  flex-shrink: 0;
   font-size: 12px;
-  margin-bottom: 4px;
-}
-
-.last-night__history th,
-.last-night__history td {
-  text-align: left;
-  padding: 4px 8px 4px 0;
   color: var(--muted);
+  white-space: nowrap;
 }
 
-.last-night__history td:first-child {
-  color: var(--text);
+/* Fewer than three non-null points (v1.29 binding rule 6): values render
+   as text, since a line through two points is a slope, and a slope is a
+   trend claim §3.1 forbids at this sample size. */
+.last-night__row-fallback {
+  margin: 0;
+  font-size: 12px;
+  color: var(--muted);
 }
 
 /* ---- today's session (§8.1 panel 2) ---- */
