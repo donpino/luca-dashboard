@@ -1,4 +1,4 @@
-# Training Dashboard — Build Spec v1.26
+# Training Dashboard — Build Spec v1.27
 
 **Athlete:** Luca · **Campaign:** middle-distance, Foundation block → 2032
 **Status:** Phase 1 complete — `daily` table, RLS/grants, `/log`,
@@ -88,7 +88,12 @@ band" wording is deferred, not abandoned. "Today's session" reads
 illness, a rolling-7-day volume ramp) and is absent entirely, not empty,
 when none qualify. `compute/build_data.py` gained `build_today()`,
 writing `web/public/data/today.json`. See the v1.26 amendment below.
-· **Date:** 13 Aug 2026
+**v1.26's Flag rule 3 shipped without a tracking-break guard and was
+found live rendering an inflated ramp number — fixed, rule 3 is now
+suppressed (not caveated) whenever either 7-day window it compares
+touches a pre-8-Aug-2026 date, falling through to `None` exactly as if
+the rule hadn't matched.** See the v1.27 amendment below.
+· **Date:** 14 Aug 2026
 
 This document is the contract. It goes in the repo root alongside `CLAUDE.md`.
 Anything not defined here is an open question, not an implementation detail to
@@ -1722,6 +1727,69 @@ fired were decided in `compute/metrics.py`.
 
 ---
 
+**Amendments in v1.27 (14 Aug 2026)** — v1.26's Flag rule 3 was specified
+and shipped without a tracking-break guard. That was wrong, not a
+missing nice-to-have: it shipped a number that overstated the volume
+ramp by an unknown amount on the default landing page, marked as a
+`today_flag`.
+
+**The defect, stated plainly.** Rule 3 compares two trailing 7-day
+`rolling_7d_km` windows. Nothing in it checked whether either window
+fell before 2026-08-08, the FR70 cutover — despite §7's own binding note
+(the v1.7 amendment) that `rolling_7d_km` for any range ending before
+that date is a floor on true volume, never a measurement, because of the
+unreliable pre-FR70 phone/Zepp tracking. Live on 14 Aug 2026 this
+reported a ramp of +37% (40.7 km vs 29.8 km) where the comparison window
+(2026-07-30..2026-08-05) was entirely pre-break and the current window
+(2026-08-06..2026-08-12) included two pre-break days. The true ramp
+against fully-tracked volume is unknown — it could be larger, smaller,
+or not a ramp at all — and v1.26 rendered it as a plain percentage on
+the one panel a single unattended reader checks daily. Both windows stay
+contaminated until 2026-08-22 (the first day the earlier of the two
+windows clears 2026-08-08 entirely), so this was not a transient glitch
+that would have resolved itself within the coming week.
+
+**The fix — suppression, not a caveat, binding.** Rule 3 does not fire
+at all if either 7-day window contains any date before 2026-08-08.
+Suppressed, the rule is treated as a non-match: evaluation falls through
+exactly as if rule 3 had not fired, so `today_flag` returns `None` when
+rules 1 and 2 also miss, and §8.1's Flag slot is absent entirely — not
+present with a warning, asterisk, or "provisional" label attached. A
+caveated number was considered and rejected: this dashboard runs
+unattended for weeks between checks by a single reader (§1, §3), and a
+flag that has to be mentally discounted every time it's seen trains that
+reader to discount flags in general, which devalues shin and illness
+flags — the two that are never data-quality-compromised — right along
+with it. Absence is legible without context; a footnoted number is not.
+
+**Boundary reuses `UNDERSTATED_VOLUME_CUTOFF`, the existing constant —
+no second hardcoded date.** `compute/metrics.py` already defines this
+constant (§7/§8.3, v1.7/v1.16) and `shin_series` already reads it
+day-by-day to derive `understated_volume`, per v1.16's binding
+"read from data/one source of truth" precedent. `today_flag` imports and
+compares against that same module-level constant directly — it did not
+need a second lookup path or a value threaded in from elsewhere, so
+nothing was added to the constant itself. The two 7-day windows rule 3
+compares are contiguous (the "current" window ends yesterday, the "prev"
+window ends 7 days before that), so checking only the prev window's
+start date against the cutoff is sufficient to catch a date anywhere in
+either window — no separate check is needed for the current window.
+
+**This rule can begin firing again on 2026-08-22.** Suppression clears
+the first day the prev window's start date is no longer before
+2026-08-08. For `today = 2026-08-22`: prev window 2026-08-08..2026-08-14,
+current window 2026-08-15..2026-08-21 — both fully post-break. No code
+change is needed on that date — the guard clears itself as real dates
+accumulate past the cutoff, same as `shin_series`'s existing hatch does.
+
+**No other rule changed.** Rules 1 (shin) and 2 (illness) have no
+tracking-break dependency and are untouched. §7's `today_flag` table row
+and §8.1's Panel 3 description below are updated to state the guard;
+`ramp_pct`'s own §7 row and the Week page (§8.2) are untouched — this
+amendment is scoped to `today_flag` rule 3 only.
+
+---
+
 ## 1. What this is
 
 A private-by-design training dashboard — public source repo, privately-hosted
@@ -2278,7 +2346,7 @@ These are binding. The frontend must not recompute or reinterpret them.
 | `shin_series` | `daily.shin` joined to `rolling_7d_km` by date. **`NULL` is never coerced to `0`.** A missing day renders as a gap in the step series with a distinct unfilled marker on the date axis — not a value, not a zero. Every panel consuming shin declares its coverage as `n answered / n days in range`. **Added v1.13 — the §10 band threshold for shin's marker state: `shin = 0` is `in_band`; `shin` 1–3 is `out_of_band`; no row is `not_answered`.** Each entry also carries `understated_volume` (v1.7's pre-8-Aug-2026 floor-not-measurement flag, §8.3). Both are computed by `shin_series` itself, not derived by the frontend (CLAUDE.md rule 3). |
 | `last_night` | **Added v1.26, §8.1 Panel 1.** Sleep/RHR/HRV for the most recent `biometrics` row, plus a value list scoped to the *current device only* (reuses `rhr_baseline`/`hrv_baseline`'s own `_rows_on_current_device` filter — CLAUDE.md rule 5) and a computed `band_possible_from` date (`first_date_on_current_device + (HRV_BASELINE_MIN_DAYS − 1)` days). **Deliberately computes no band** — see the v1.26 amendment for the full reasoning. A null sensor reading stays null (rule 12). |
 | `session_for_date` | **Added v1.26, §8.1 Panel 2.** The single `sessions` row for a given date (`sessions.date` is unique, §5), narrowed to `session_type`/`purpose`/`prescription`/`done`. No row is `None`, a real state, not an error. |
-| `today_flag` | **Added v1.26, §8.1 Panel 3.** At most one of `{shin, illness, volume_ramp}`, evaluated in that order, first hit wins, `None` if nothing qualifies. Rule 1: `daily.shin > 0` today or yesterday (today first), **NULL is never a hit**. Rule 2: `daily.illness is True` today or yesterday (today first). Rule 3: completed rolling 7-day km (window ending **yesterday**, never today — "never project the current week forward") more than `TODAY_FLAG_VOLUME_RAMP_PCT` (10%, strict `>`) above the preceding completed 7-day window, via `rolling_7d_km`/`ramp_pct`. **Distinct from `ramp_pct`'s own row above**: that compares calendar Mon–Sun weeks (`weekly_km`, §8.2); this compares two trailing 7-day windows (`rolling_7d_km`) — same 10% tolerance, different question, not shared code. |
+| `today_flag` | **Added v1.26, §8.1 Panel 3.** At most one of `{shin, illness, volume_ramp}`, evaluated in that order, first hit wins, `None` if nothing qualifies. Rule 1: `daily.shin > 0` today or yesterday (today first), **NULL is never a hit**. Rule 2: `daily.illness is True` today or yesterday (today first). Rule 3: completed rolling 7-day km (window ending **yesterday**, never today — "never project the current week forward") more than `TODAY_FLAG_VOLUME_RAMP_PCT` (10%, strict `>`) above the preceding completed 7-day window, via `rolling_7d_km`/`ramp_pct`. **Distinct from `ramp_pct`'s own row above**: that compares calendar Mon–Sun weeks (`weekly_km`, §8.2); this compares two trailing 7-day windows (`rolling_7d_km`) — same 10% tolerance, different question, not shared code. **Added v1.27 — rule 3 is suppressed entirely, falling through as a non-match, if either 7-day window contains any date before `UNDERSTATED_VOLUME_CUTOFF` (§7's own v1.7 floor-not-measurement note, same constant `shin_series` already reads).** No caveat, no warning render — see the v1.27 amendment for why a caveated number was rejected. Suppression lifts 2026-08-22, once both windows clear the cutoff. |
 
 **Added v1.7 — floor, not measurement, for any range ending before
 2026-08-08.** `weekly_km`, `ramp_pct`, `rolling_7d_km`, and
@@ -2328,7 +2396,7 @@ Read-only, fully automatic. Ten seconds, once, in the morning.
 |---|---|---|
 | Last night | Sleep, RHR, HRV | **Built v1.26 without a band — deferred, see the v1.26 amendment.** Three raw values, a current-device-era-only value list, and one note stating no band exists yet, that Amazfit baselines don't transfer, and the computed date a band becomes possible. Gains the originally-specified "vs *his* band" once `rhr_baseline`/`hrv_baseline` (§7) have enough FR70 nights. |
 | Today's session | What to do | Pulled from `sessions` for the exact date: `session_type`, `purpose`, `prescription`, `done`. No row for today renders as plain text saying so. |
-| Flag | Anything needing a decision | **At most one**, evaluated shin → illness → volume ramp, first hit wins (§7 `today_flag`, v1.26 amendment). If nothing qualifies, the slot is absent, not empty. |
+| Flag | Anything needing a decision | **At most one**, evaluated shin → illness → volume ramp, first hit wins (§7 `today_flag`, v1.26 amendment). If nothing qualifies, the slot is absent, not empty. **The volume-ramp rule is suppressed (not caveated) while either comparison window touches pre-8-Aug-2026 data — v1.27 amendment.** |
 
 The only thing Luca touches is the `/log` link.
 

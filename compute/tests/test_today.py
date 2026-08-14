@@ -175,11 +175,63 @@ def test_today_flag_illness_false_is_not_a_hit():
 
 
 def test_today_flag_volume_ramp_over_threshold():
-    # today = 2026-08-13. completed_end = 2026-08-12 (yesterday).
-    # current 7d window: 2026-08-06..2026-08-12 -> 5+5+5+5+5 = 25.0 km
-    # (five runs of 5km on 06,07,08,09,10)
-    # prev 7d window: 2026-07-30..2026-08-05 -> 20.0 km (four runs of 5km)
+    # Both windows entirely after UNDERSTATED_VOLUME_CUTOFF (2026-08-08) —
+    # same shape as the original pre-break fixture, shifted +13 days so it
+    # is no longer suppressed by the tracking-break guard (v1.27).
+    # today = 2026-08-26. completed_end = 2026-08-25 (yesterday).
+    # current 7d window: 2026-08-19..2026-08-25 -> 5+5+5+5+5 = 25.0 km
+    # (five runs of 5km on 19,20,21,22,23)
+    # prev 7d window: 2026-08-12..2026-08-18 -> 20.0 km (four runs of 5km)
     # pct = (25 - 20) / 20 = 0.25 -> > 0.10, flags
+    activities = [
+        _run("2026-08-12", 5.0),
+        _run("2026-08-13", 5.0),
+        _run("2026-08-14", 5.0),
+        _run("2026-08-15", 5.0),
+        _run("2026-08-19", 5.0),
+        _run("2026-08-20", 5.0),
+        _run("2026-08-21", 5.0),
+        _run("2026-08-22", 5.0),
+        _run("2026-08-23", 5.0),
+    ]
+    result = today_flag(activities, [], date(2026, 8, 26))
+    assert result == {
+        "kind": "volume_ramp",
+        "window_end": date(2026, 8, 25),
+        "current_7d_km": 25.0,
+        "prev_7d_km": 20.0,
+        "pct": 0.25,
+    }
+
+
+def test_today_flag_volume_ramp_suppressed_when_window_wholly_pre_break():
+    # Same 25/20/0.25 shape as the fires-normally case above, but both
+    # windows sit entirely before UNDERSTATED_VOLUME_CUTOFF (2026-08-08).
+    # today = 2026-08-06. completed_end = 2026-08-05.
+    # current 7d window: 2026-07-30..2026-08-05 (all pre-break)
+    # prev 7d window: 2026-07-23..2026-07-29 (all pre-break)
+    # Would fire at pct=0.25 without the guard; must return None instead.
+    activities = [
+        _run("2026-07-23", 5.0),
+        _run("2026-07-24", 5.0),
+        _run("2026-07-25", 5.0),
+        _run("2026-07-26", 5.0),
+        _run("2026-07-30", 5.0),
+        _run("2026-07-31", 5.0),
+        _run("2026-08-01", 5.0),
+        _run("2026-08-02", 5.0),
+        _run("2026-08-03", 5.0),
+    ]
+    result = today_flag(activities, [], date(2026, 8, 6))
+    assert result is None
+
+
+def test_today_flag_volume_ramp_suppressed_when_window_straddles_break():
+    # This is the live defect (DASHBOARD_SPEC.md v1.27 amendment): today
+    # = 2026-08-13, completed_end = 2026-08-12. Current 7d window
+    # 2026-08-06..2026-08-12 includes two pre-break days (06, 07); the
+    # prev 7d window 2026-07-30..2026-08-05 is entirely pre-break. Before
+    # the fix this fired at pct=0.25; now it must be suppressed.
     activities = [
         _run("2026-07-30", 5.0),
         _run("2026-07-31", 5.0),
@@ -192,13 +244,27 @@ def test_today_flag_volume_ramp_over_threshold():
         _run("2026-08-10", 5.0),
     ]
     result = today_flag(activities, [], date(2026, 8, 13))
-    assert result == {
-        "kind": "volume_ramp",
-        "window_end": date(2026, 8, 12),
-        "current_7d_km": 25.0,
-        "prev_7d_km": 20.0,
-        "pct": 0.25,
-    }
+    assert result is None
+
+
+def test_today_flag_volume_ramp_suppression_falls_through_to_none():
+    # Rules 1 and 2 are given explicit non-hits (not just absent data), and
+    # rule 3's window straddles the break with a large ramp. The result
+    # must be plain None, not a shin/illness flag substituted in.
+    daily = [_daily("2026-08-13", shin=0, illness=False), _daily("2026-08-12", shin=0, illness=False)]
+    activities = [
+        _run("2026-07-30", 5.0),
+        _run("2026-07-31", 5.0),
+        _run("2026-08-01", 5.0),
+        _run("2026-08-02", 5.0),
+        _run("2026-08-06", 5.0),
+        _run("2026-08-07", 5.0),
+        _run("2026-08-08", 5.0),
+        _run("2026-08-09", 5.0),
+        _run("2026-08-10", 5.0),
+    ]
+    result = today_flag(activities, daily, date(2026, 8, 13))
+    assert result is None
 
 
 def test_today_flag_volume_ramp_excludes_todays_activity_never_projects():
@@ -210,16 +276,19 @@ def test_today_flag_volume_ramp_excludes_todays_activity_never_projects():
 
 
 def test_today_flag_volume_ramp_at_or_below_threshold_does_not_flag():
-    # current = 22, prev = 20 -> pct = 0.10 exactly, not "more than" 10%
+    # current = 22, prev = 20 -> pct = 0.10 exactly, not "more than" 10%.
+    # Windows shifted +13 days (post-break, same as the fires-normally
+    # test above) so this genuinely exercises the threshold check rather
+    # than being None only because the suppression guard also applies.
     activities = [
-        _run("2026-07-30", 5.0),
-        _run("2026-07-31", 5.0),
-        _run("2026-08-01", 5.0),
-        _run("2026-08-02", 5.0),
-        _run("2026-08-06", 5.5),
-        _run("2026-08-07", 5.5),
-        _run("2026-08-08", 5.5),
-        _run("2026-08-09", 5.5),
+        _run("2026-08-12", 5.0),
+        _run("2026-08-13", 5.0),
+        _run("2026-08-14", 5.0),
+        _run("2026-08-15", 5.0),
+        _run("2026-08-19", 5.5),
+        _run("2026-08-20", 5.5),
+        _run("2026-08-21", 5.5),
+        _run("2026-08-22", 5.5),
     ]
-    result = today_flag(activities, [], date(2026, 8, 13))
+    result = today_flag(activities, [], date(2026, 8, 26))
     assert result is None

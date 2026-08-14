@@ -555,8 +555,21 @@ def today_flag(activities: list[dict], daily: list[dict], today: date) -> dict |
        Mon-Sun weeks via weekly_km, this compares two trailing 7-day
        windows via rolling_7d_km, per this page's own spec.
 
+       Suppressed entirely — not caveated, not rendered with a warning —
+       if either 7-day window contains any date before
+       UNDERSTATED_VOLUME_CUTOFF (§7/§8.3 v1.7: pre-FR70 distance is an
+       unknown floor, not a measurement, so a ramp computed over it is an
+       unknown-magnitude number, not a smaller-but-valid one). Reuses that
+       same module-level constant rather than a second hardcoded date, per
+       v1.16's binding "read from data/one source of truth" precedent
+       (DASHBOARD_SPEC.md v1.27 amendment). The two windows are
+       contiguous, so checking the earlier (prev) window's start date is
+       sufficient to catch "any date in either window."
+
     Returns None when nothing qualifies — the caller renders no panel at
-    all, not an empty or "nothing to report" one (§8.1).
+    all, not an empty or "nothing to report" one (§8.1). Suppression of
+    rule 3 falls through to this same None, exactly as if rule 3 had
+    simply not matched; it never substitutes a different flag kind.
     """
     shin_by_date = _shin_by_date(daily)
     for d in (today, today - timedelta(days=1)):
@@ -570,17 +583,20 @@ def today_flag(activities: list[dict], daily: list[dict], today: date) -> dict |
             return {"kind": "illness", "date": d}
 
     completed_end = today - timedelta(days=1)
-    current_7d_km = rolling_7d_km(activities, completed_end)
-    prev_7d_km = rolling_7d_km(activities, completed_end - timedelta(days=7))
-    pct = ramp_pct(current_7d_km, prev_7d_km)
-    if not isinstance(pct, InsufficientData) and pct > TODAY_FLAG_VOLUME_RAMP_PCT:
-        return {
-            "kind": "volume_ramp",
-            "window_end": completed_end,
-            "current_7d_km": current_7d_km,
-            "prev_7d_km": prev_7d_km,
-            "pct": pct,
-        }
+    prev_window_end = completed_end - timedelta(days=7)
+    prev_window_start = prev_window_end - timedelta(days=6)
+    if prev_window_start >= UNDERSTATED_VOLUME_CUTOFF:
+        current_7d_km = rolling_7d_km(activities, completed_end)
+        prev_7d_km = rolling_7d_km(activities, prev_window_end)
+        pct = ramp_pct(current_7d_km, prev_7d_km)
+        if not isinstance(pct, InsufficientData) and pct > TODAY_FLAG_VOLUME_RAMP_PCT:
+            return {
+                "kind": "volume_ramp",
+                "window_end": completed_end,
+                "current_7d_km": current_7d_km,
+                "prev_7d_km": prev_7d_km,
+                "pct": pct,
+            }
     return None
 
 
