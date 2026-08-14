@@ -1,3 +1,10 @@
-garminconnect
-python-dotenv
-supabase
+# Pinned exactly (2026-08-14 handover audit): this file was previously
+# unversioned, so every scheduled sync.yml run did a fresh `pip install`
+# against whatever each package's latest release happened to be that day —
+# a real risk during the unattended 14 Aug - 10 Sep window, confirmed live:
+# a fresh install pulled garminconnect 0.3.10 while the locally-tested dev
+# venv was still on 0.3.9. Pinned to the versions actually verified against
+# ingest/tests/ at handover time. Bump deliberately, not by drift.
+garminconnect==0.3.9
+python-dotenv==1.2.2
+supabase==2.31.0
