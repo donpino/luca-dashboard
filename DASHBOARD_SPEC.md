@@ -1,4 +1,4 @@
-# Training Dashboard — Build Spec v1.31
+# Training Dashboard — Build Spec v1.32
 
 **Athlete:** Luca · **Campaign:** middle-distance, Foundation block → 2032
 **Status:** Phase 1 complete — `daily` table, RLS/grants, `/log`,
@@ -118,6 +118,16 @@ always shows the reading's date and, past the clamp's normal one-day
 lag, a plain line naming the gap, and the panel is retitled "Most recent
 night." The clamp itself is deliberately unchanged going into the
 four-week unattended window. See the v1.30 amendment below.
+**Two render-layer defects fixed on the final commit before the
+four-week unattended window: §8.1 Panel 1's three sparklines now share
+one fixed-width column template so they plot the same nights at the same
+horizontal scale (previously each metric's min/max label had a different
+natural width, so the three shapes weren't comparable — the reason
+they're stacked at all); and the dashboard shell gains a real desktop
+layout above 768px (two-column Today, a widened and capped content area)
+instead of a 480px column stranded beside the sidebar. `/log` is
+untouched and still grows no breakpoint of its own.** See the v1.32
+amendment below.
 · **Date:** 14 Aug 2026
 
 This document is the contract. It goes in the repo root alongside `CLAUDE.md`.
@@ -2114,6 +2124,110 @@ defeating the measurement), `.last-night__spark-guide`, and
 
 ---
 
+**Amendments in v1.32 (14 Aug 2026)** — the final commit before the
+four-week unattended window (`RUNBOOK.md`): two layout/CSS defects found
+on review, plus one deliberately deferred item recorded for after the
+window. Layout and CSS only — no `compute/`, no `ingest/`, no migration,
+no JSON shape changed; every number on screen still traces to the same
+`compute/metrics.py` functions as v1.31.
+
+**1. Unequal sparkline widths, defect: §8.1 Panel 1's three sparklines —
+sleep total, RHR, HRV — plotted the same set of nights at three different
+horizontal scales.** Each metric row was `[sparkline flex:1][min/max
+label]`, and the min/max label's natural width varied by metric ("6h
+31m–7h 51m" vs "41–44 bpm" vs "74–93 ms"), so the flexible sparkline
+column resolved to a different width on each row. The three shapes could
+not be laid one above the other and compared at a glance — the entire
+reason v1.29 stacked them in the first place — because they weren't drawn
+at the same scale. **Fix, binding going forward:** `.last-night__row-head`
+and `.last-night__row-chart` (`global.css`) both use the same two-column
+grid template — a flexible left column and one fixed-width right column,
+`--last-night-side-col` (88px), shared by label/value and sparkline/range
+alike. Because the right column is a constant width on every row, the
+left (sparkline) column resolves to an identical width on every row too,
+and because both lines of a metric row share the same template, the
+label, value, sparkline, and range columns all align vertically across
+Sleep/RHR/HRV, not just the chart. Long min/max text (e.g. "6h
+31m–7h 51m") wraps onto a second line inside that fixed column
+(`overflow-wrap: break-word`) rather than widening it — a column never
+grows to fit its content. No change to `sparkline.ts`'s geometry
+functions or to any v1.29/v1.31 binding rule: no area fill or gradient,
+each sparkline still states its own min/max as text, no trend line or
+direction word, nulls still break the line, fewer than three points still
+falls back to text, no reference band.
+
+**2. Empty desktop layout, defect: `.page` capped at 480px and centred
+regardless of viewport, so on a wide screen the 208px sidebar (§9, v1.25)
+sat beside a narrow 480px column with most of the viewport left blank.**
+Desktop is the athlete's primary device for this dashboard; phone is
+correct for camp but was the only viewport actually designed for.
+**Fix:** the phone layout is unchanged below 768px — same single column,
+same 480px cap, same stacked panels. Above 768px, `.app-main .page`
+(App.tsx's dashboard shell only) widens to a 960px cap, centred in the
+space beside the sidebar; 960px is a ceiling, not a target, chosen so a
+single-column panel (Block's shin chart) doesn't stretch edge-to-edge on
+a very wide monitor. On Today, `.today-grid` (wrapping just "Most recent
+night" and "Today's session" in `Today.tsx`) becomes a two-column grid
+at the same breakpoint — each column resolves to roughly 454px, close to
+the phone column's own width, so neither panel reads unnaturally wide.
+The Flag panel is deliberately left outside `.today-grid`, rendered as a
+sibling after it exactly as before: it's absent entirely when nothing
+qualifies (§8.1), so it can't be a fixed grid cell, and it reads fine as
+a full-width panel below the two-column row. Week and Block get the wider
+960px content area with no grid changes — their existing single-column
+panels (six `EmptyPanel`s plus check-in on Week; the shin chart on Block)
+read sensibly wider without needing a two-column split.
+
+**`/log` is deliberately excluded, not merely untouched.** `/log`
+(`LogPage.tsx`) renders its own `<div className="page">` with no
+`.app-main` ancestor — it's a separate build entry (CLAUDE.md, §4) that
+never imports the dashboard shell or its `Nav`. The v1.32 widening rule is
+written as `.app-main .page`, not bare `.page`, specifically so it cannot
+reach `/log`'s markup. `/log` stays phone-first, single column, and grows
+no breakpoint of its own, per §8.5 and this file's original v1.25 intent
+— confirmed by loading `/log` at a 1440px viewport and observing the
+480px cap held.
+
+**Verification.** Checked in the browser at a 390px phone width and a
+1440px desktop width. At 390px: all three Panel 1 sparklines render at
+identical width, start/end at the same x, and their columns align with
+the label/value row above; hover still shows the nearest point's date and
+value; Week and Block render as a single stacked column exactly as
+before; the Block shin chart renders and its hover tooltip works. At
+1440px: the sidebar sits at 208px, "Most recent night" and "Today's
+session" sit side by side in a centred ~960px content area with visible
+margin beside the sidebar (not edge-to-edge); Week's panels read as a
+single wider column; the Block shin chart resizes to the wider width,
+keeps its fixed 280px height (§9's fixed-chart-height convention,
+unchanged), and its hover tooltip still works. `/log` was loaded at the
+1440px viewport and confirmed still capped at 480px.
+
+**Deferred, added to §13 as open item 8 — not improvised into this
+commit:** capturing sleep start/end timestamps from Garmin into
+`biometrics`, so bedtime and wake time become recorded data rather than
+something the athlete reports by hand. It needs a migration (new
+`biometrics` columns) and an `ingest/garmin_client.py` change to read
+them off the sleep endpoint — both out of scope for a layout-and-CSS-only
+commit made on the way into a four-week window where the ingest pipeline
+must run unattended and untouched. No history is lost by waiting: Garmin
+retains sleep timing on its own servers, and `sync.py --from/--to` (v1.4)
+can backfill it once the columns exist. This isn't speculative — the
+coaching check-in thread has already used bedtime and late-meal timing by
+hand to explain overnight RHR/HRV readings, so the data has demonstrated
+value before the column does.
+
+**Implementation.** `global.css`: `.last-night__row`,
+`.last-night__row-head`, `.last-night__row-chart`,
+`.last-night__row-value`, `.last-night__row-range` (fixed grid columns,
+defect 1); `.app-main .page` media rule and `.today-grid` (defect 2).
+`Today.tsx`: `LastNightPanel`/`TodaySessionPanel` wrapped in a
+`.today-grid` div; `FlagPanel` unchanged, still a sibling rendered only
+when non-null. No change to `sparkline.ts`, `LastNightPanel.tsx`'s
+geometry/hover logic, `ShinVolumePanel.tsx`, `shinVolumeChart.ts`, or any
+`compute/`/`ingest/` file.
+
+---
+
 ## 1. What this is
 
 A private-by-design training dashboard — public source repo, privately-hosted
@@ -2718,7 +2832,7 @@ Read-only, fully automatic. Ten seconds, once, in the morning.
 
 | Panel | Answers | Encoding |
 |---|---|---|
-| Most recent night (titled "Last night" v1.26–v1.29, renamed v1.30 — see the v1.30 amendment) | Sleep, RHR, HRV | **Built v1.26 without a band — deferred, see the v1.26 amendment.** Three raw values, a current-device-era-only value list, and one note stating no band exists yet, that Amazfit baselines don't transfer, and the computed date a band becomes possible. Gains the originally-specified "vs *his* band" once `rhr_baseline`/`hrv_baseline` (§7) have enough FR70 nights. **v1.30:** the reading's date is always shown next to the values, and a plain staleness line appears when `days_behind` exceeds the clamp's normal one-day lag — the panel never implies the reading is more current than it is. **v1.31:** the three sparklines (v1.29) render undistorted and unclipped at any viewport width, are taller for at-a-glance legibility, and support hover — nearest-point date and value in a tooltip matching the Block panel's register — see the v1.31 amendment for the four defects fixed and why an area fill stayed rejected. |
+| Most recent night (titled "Last night" v1.26–v1.29, renamed v1.30 — see the v1.30 amendment) | Sleep, RHR, HRV | **Built v1.26 without a band — deferred, see the v1.26 amendment.** Three raw values, a current-device-era-only value list, and one note stating no band exists yet, that Amazfit baselines don't transfer, and the computed date a band becomes possible. Gains the originally-specified "vs *his* band" once `rhr_baseline`/`hrv_baseline` (§7) have enough FR70 nights. **v1.30:** the reading's date is always shown next to the values, and a plain staleness line appears when `days_behind` exceeds the clamp's normal one-day lag — the panel never implies the reading is more current than it is. **v1.31:** the three sparklines (v1.29) render undistorted and unclipped at any viewport width, are taller for at-a-glance legibility, and support hover — nearest-point date and value in a tooltip matching the Block panel's register — see the v1.31 amendment for the four defects fixed and why an area fill stayed rejected. **v1.32:** the three sparklines share one fixed-width column template with the label/value row above them, so all three plot at the same horizontal scale and every column aligns across the three metrics — see the v1.32 amendment for the defect this fixes. Also v1.32: sits beside "Today's session" in a two-column grid on desktop (`.today-grid`, >=768px), unchanged single-column stack on phone. |
 | Today's session | What to do | Pulled from `sessions` for the exact date: `session_type`, `purpose`, `prescription`, `done`. No row for today renders as plain text saying so. |
 | Flag | Anything needing a decision | **At most one**, evaluated shin → illness → volume ramp, first hit wins (§7 `today_flag`, v1.26 amendment). If nothing qualifies, the slot is absent, not empty. **The volume-ramp rule is suppressed (not caveated) while either comparison window touches pre-8-Aug-2026 data — v1.27 amendment.** |
 
@@ -3089,6 +3203,20 @@ responses* used as test fixtures, not hand-written stand-ins.
    porting at Phase 2 (§8.4, §12) — those tables don't exist yet, so the
    drawer has nothing to show for two of its five fields. Revisit once
    Phase 2 lands.
+
+8. *(added v1.32)* Capture sleep start/end timestamps from Garmin into
+   `biometrics`, so bedtime and wake time become recorded data instead of
+   something the athlete reports by hand. Needs a migration (new
+   `biometrics` columns) plus an `ingest/garmin_client.py` change to read
+   them off the sleep endpoint. Deliberately deferred on 14 Aug 2026,
+   the final commit before a four-week unattended window (`RUNBOOK.md`)
+   during which the ingest pipeline is not touched. No history is lost by
+   waiting — Garmin retains the data on its own servers, and
+   `sync.py --from/--to` (v1.4) can backfill once the columns exist. Not
+   speculative: the coaching check-in thread has already used bedtime and
+   late-meal timing, reported by hand, to explain overnight RHR/HRV
+   readings — the value is demonstrated, the column just doesn't exist
+   yet. Revisit after the unattended window closes.
 
 **Resolved in v1.1 and moved out of this list:** null-vs-zero for `shin`
 (§5, §7, §10); `/log` form layout (§8.5); archive/backup location (§4, §11.6).

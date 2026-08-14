@@ -1,10 +1,15 @@
 /* DASHBOARD_SPEC.md §10 — visual system tokens. Shared by both build
    entries (dashboard + /log). Single stylesheet, phone-first by default.
-   The one exception, added v1.25: the dashboard's persistent nav (§9) is
-   a left sidebar >=768px and a bottom bar below it — see the .nav rules
-   below. /log stays phone-first, single column, no desktop layout (§8.5)
-   and never grows a breakpoint of its own; the .nav classes it never
-   renders are the only ones this stylesheet changes by viewport width. */
+   The exceptions, added v1.25 and widened v1.32: the dashboard's
+   persistent nav (§9) is a left sidebar >=768px and a bottom bar below
+   it (see the .nav rules below), and the dashboard's content area itself
+   widens >=768px (`.app-main .page`, `.today-grid` — §8.1 v1.32
+   amendment). /log stays phone-first, single column, no desktop layout
+   (§8.5) and never grows a breakpoint of its own — every viewport-keyed
+   rule in this file is scoped to classes /log's markup never renders
+   (`.nav`, `.app-main .page`, `.today-grid`), not to bare `.page`, so
+   /log's own `.page` (LogPage.tsx, no `.app-main` ancestor) is
+   unaffected. */
 
 :root {
   --ink: #0b0e13;
@@ -79,6 +84,24 @@ textarea {
   display: flex;
   flex-direction: column;
   padding: 16px 16px 0;
+}
+
+/* v1.32 (defect 2): phone layout above is unchanged — this only widens
+   the content area once the sidebar nav (>=768px, see .nav below) has
+   already taken over from the bottom bar. Scoped to `.app-main .page`
+   (the dashboard shell, App.tsx) rather than bare `.page` — /log renders
+   its own `.page` with no `.app-main` ancestor (separate build entry,
+   this file's header comment, §8.5) and must never grow a breakpoint of
+   its own. 960px is a cap, not a target: it keeps a single-column panel
+   (e.g. Block's shin chart) from stretching edge-to-edge on a very wide
+   monitor, while giving the Today grid two ~454px columns — close to the
+   phone column's own width, so nothing on a single "row" reads
+   unnaturally wide. */
+@media (min-width: 768px) {
+  .app-main .page {
+    max-width: 960px;
+    padding: 32px 32px 0;
+  }
 }
 
 .page-header {
@@ -603,6 +626,31 @@ textarea {
   opacity: 0.7;
 }
 
+/* ---- today grid (§8.1 desktop layout, v1.32) ----
+   Phone default: a plain stack, identical to pre-v1.32 markup order.
+   >=768px: "Most recent night" and "Today's session" sit side by side;
+   the Flag panel (rendered as a sibling after this grid in Today.tsx, not
+   inside it) spans the full content width below both, unchanged from its
+   mobile block layout — CLAUDE.md/§8.1: the Flag is absent entirely when
+   nothing qualifies, so it can't be a fixed grid cell. */
+.today-grid {
+  display: flex;
+  flex-direction: column;
+}
+
+@media (min-width: 768px) {
+  .today-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    align-items: start;
+    column-gap: 20px;
+  }
+
+  .today-grid > .panel {
+    margin-bottom: 0;
+  }
+}
+
 /* ---- last night (§8.1 panel 1, sparklines added v1.29) ---- */
 
 .last-night__rows {
@@ -612,17 +660,31 @@ textarea {
   margin-bottom: 12px;
 }
 
+/* v1.32 fix (defect 1): row-head and row-chart share the exact same
+   two-column track template — a flexible left column and a *fixed-width*
+   right column (--last-night-side-col) — so the label/sparkline column
+   and the value/range column line up vertically between the two lines of
+   a metric, and the fixed right column is identical across all three
+   metric rows regardless of how wide "Sleep"/"RHR"/"HRV" or their min/max
+   text happen to be. Because the right column is a constant width on
+   every row, the left (sparkline) column resolves to the same width on
+   every row too — the actual defect: three sparklines of the same nights
+   at three different horizontal scales. The column is sized to fit the
+   longest current-value text (e.g. "7h 51m") and long min/max text is
+   handled by shrinking/wrapping in that column (.last-night__row-range),
+   never by widening it. */
 .last-night__row {
+  --last-night-side-col: 88px;
   display: flex;
   flex-direction: column;
   gap: 4px;
 }
 
 .last-night__row-head {
-  display: flex;
+  display: grid;
+  grid-template-columns: 1fr var(--last-night-side-col);
   align-items: baseline;
-  justify-content: space-between;
-  gap: 12px;
+  column-gap: 10px;
 }
 
 .last-night__label {
@@ -633,12 +695,14 @@ textarea {
 .last-night__row-value {
   font-size: 18px;
   font-weight: 600;
+  text-align: right;
 }
 
 .last-night__row-chart {
-  display: flex;
+  display: grid;
+  grid-template-columns: 1fr var(--last-night-side-col);
   align-items: center;
-  gap: 10px;
+  column-gap: 10px;
 }
 
 /* Fixed height so a two-night series and a full device-era series read at
@@ -653,7 +717,6 @@ textarea {
    `position: relative` anchors the hover tooltip below. */
 .last-night__spark-wrap {
   position: relative;
-  flex: 1;
   min-width: 0;
   height: 56px;
 }
@@ -717,12 +780,16 @@ textarea {
 
 /* Binding rule 1 (v1.29): every sparkline states its own min/max in text,
    beside it — a box scaled to its own data misreads a small spread as a
-   big one without the numbers in view. */
+   big one without the numbers in view. v1.32: this column's width is
+   fixed (--last-night-side-col, shared with .last-night__row-value) so
+   long text (e.g. "6h 31m–7h 51m") wraps onto a second line instead of
+   widening the column and starving the sparkline next to it. */
 .last-night__row-range {
-  flex-shrink: 0;
   font-size: 12px;
   color: var(--muted);
-  white-space: nowrap;
+  text-align: right;
+  white-space: normal;
+  overflow-wrap: break-word;
 }
 
 /* Fewer than three non-null points (v1.29 binding rule 6): values render

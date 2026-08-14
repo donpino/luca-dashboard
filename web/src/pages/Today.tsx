@@ -47,8 +47,12 @@ export default function Today() {
   const { data } = state
   return (
     <>
-      <LastNightPanel data={data.last_night} />
-      <TodaySessionPanel session={data.session} />
+      {/* v1.32: side-by-side on desktop (.today-grid, >=768px), a plain
+          stack on phone — see DASHBOARD_SPEC.md's v1.32 amendment. */}
+      <div className="today-grid">
+        <LastNightPanel data={data.last_night} />
+        <TodaySessionPanel session={data.session} />
+      </div>
       {/* §8.1: absent entirely when nothing qualifies — not an empty or
           "nothing to report" card. */}
       {data.flag && <FlagPanel flag={data.flag} />}
