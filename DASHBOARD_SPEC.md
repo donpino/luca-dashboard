@@ -1,4 +1,4 @@
-# Training Dashboard — Build Spec v1.30
+# Training Dashboard — Build Spec v1.31
 
 **Athlete:** Luca · **Campaign:** middle-distance, Foundation block → 2032
 **Status:** Phase 1 complete — `daily` table, RLS/grants, `/log`,
@@ -2013,6 +2013,107 @@ as instructed.
 
 ---
 
+**Amendments in v1.31 (14 Aug 2026)** — four render-layer defects on the
+v1.29 sparklines, found on review before the four-week unattended window
+opened. All fixes are contained to `web/src/panels/sparkline.ts`,
+`LastNightPanel.tsx`, and `global.css`; no `compute/metrics.py` change,
+same as v1.29 — `last_night.values` already carried every field needed.
+
+**1. Distortion, defect: `preserveAspectRatio="none"` on a fixed
+120x32 viewBox stretched into a ~340px-wide row scaled x roughly 3x more
+than y.** Point dots (`<circle>`) rendered as ovals, and every slope was
+non-uniformly squashed — a shape that misrepresented its own data.
+**Fix, binding going forward: the SVG's viewBox is built from the box's
+own measured rendered width, not a fixed constant.** `LastNightPanel.tsx`
+measures its wrapping div via `ResizeObserver` (`useMeasuredWidth`) and
+sets `viewBox="0 0 {measuredWidth} {SPARK_HEIGHT}"` each render, dropping
+`preserveAspectRatio="none"` entirely. This was the deliberate choice
+between the two options considered — dropping `preserveAspectRatio="none"`
+outright (in favour of the SVG default, `xMidYMid meet`) would still
+distort at any width where the fixed viewBox's aspect ratio didn't match
+the rendered box, which is every width except one; the row's width is
+responsive (fills the panel, phone through desktop) and has no single
+correct aspect ratio to hardcode. Measuring the real box and building the
+viewBox to match it keeps x-scale equal to y-scale at any width, so a
+dot is always a circle. `sparklinePoints` and the new
+`nearestSparklineIndex` (rule 4 below) are pure functions taking `width`
+as a parameter precisely so this measurement can be threaded through
+without either function needing to know about the DOM.
+
+**2. Clipping, defect: points at the series extreme sat exactly on the
+viewBox edges (x=0, x=width, y=0, y=height), so the stroke and dot at
+each extreme were clipped in half.** **Fix, binding: `sparklinePoints`
+gained an `inset` parameter** (`web/src/panels/sparkline.ts`, default 0,
+preserving every pre-v1.31 call site) that shrinks the plotted area in
+from all four viewBox edges. `LastNightPanel.tsx` calls it with
+`SPARK_INSET = SPARK_STROKE_WIDTH (1.5) + SPARK_DOT_RADIUS (2.5) = 4`,
+the minimum that keeps a full stroke and a full dot inside the visible
+box at every extreme.
+
+**3. Legibility, defect: the box was 28px tall, too short to read a
+shape at a glance, particularly on a phone.** **Fix: `SPARK_HEIGHT` raised
+to 56px**, shared by all three metrics (Sleep, RHR, HRV) via the one
+constant, so they stay the same height as each other.
+
+**4. No hover, defect: the shin panel on Block has one (ECharts'
+axis-triggered tooltip); this didn't, and a viewer couldn't inspect an
+individual night's number.** **Fix: hand-rolled hover, no charting
+library — Today stays ECharts-free, same reasoning as v1.29.** A new pure
+function, `nearestSparklineIndex` (`sparkline.ts`), inverts
+`sparklinePoints`' x-placement to map a pointer x-coordinate to the
+nearest data index — axis-triggered, the same register as the Block
+panel's shin chart (`shinVolumeChart.ts`'s `tooltipFormatter`: nearest
+point by position, not a precise hit on a small dot). On hover,
+`LastNightPanel.tsx` shows the night's date and value in a small tooltip
+styled to match that same register — surface background, hairline
+border, mono text, bold date line first (`shinVolumeChart.ts`'s
+`tooltip` option, translated from ECharts config into
+`.last-night__spark-tooltip` CSS) — plus a vertical guide line at the
+hovered x-position, mirroring ECharts' `axisPointer`. Hovering a gap
+(nearest index is null) shows nothing: the line's own break already
+states there is no data there, and a tooltip reading "—" would blur that.
+**Keyboard focus was considered and deliberately not built** — with up to
+several dozen nights per sparkline, making every dot a tab stop would
+add that many tab stops to the page for a marginal gain on a mostly
+touch-used daily-check panel, and the task explicitly did not require it
+("welcome if it costs little, do not block on it"); this was judged not
+little. Touch devices, which have no hover event at all, are unaffected
+by any of this — the current value and each sparkline's own min/max
+stated in text beside it (v1.29 binding rule 1) were already visible
+regardless of hover and remain exactly as they were.
+
+**Unchanged, explicitly — the v1.29 binding rules stand as written and
+none of the above touches them:** no area fill, no gradient, no shading
+under the line. **This was reconsidered while raising the box height and
+rejected for the same reason v1.27 rejected a caveated volume-ramp
+number instead of suppressing it: an easier-to-read chart is not worth a
+misleading one.** These sparklines are scaled to their own min/max, not
+to zero (v1.29 rule 1's whole point — a 3 bpm RHR spread and a 30 bpm
+spread must not draw identically tall) — filling the area under the line
+would read as *magnitude*, as if the shaded region meant something
+against a zero baseline, when the baseline here is arbitrary and unscaled.
+A taller box makes the existing unscaled shape easier to read; it is not
+license to add an encoding the shape was never designed to carry. Each
+sparkline still states its own min/max as text beside it. No trend line,
+slope, arrow, or colour-by-direction. Nulls still break the line. Fewer
+than three non-null points still falls back to text. No reference band.
+
+**Implementation.** `web/src/panels/sparkline.ts` gained `nearestSparklineIndex`
+and an `inset` parameter on `sparklinePoints` (both pure, unit-tested —
+including the inset-aware extreme-point and flat-series cases, and the
+clamping/inset cases for the new hit-testing function).
+`LastNightPanel.tsx` gained `useMeasuredWidth` (a `ResizeObserver`-backed
+hook local to the file) and hover state on the `Sparkline` component; both
+are DOM-dependent and verified manually in the browser (this project's
+existing convention — `vitest.config.ts` runs pure functions only, no
+jsdom). `global.css` gained `.last-night__spark-wrap` (the
+`position: relative` hover anchor, `min-width: 0` so the flex child
+actually shrinks to its constrained width instead of overflowing and
+defeating the measurement), `.last-night__spark-guide`, and
+`.last-night__spark-tooltip`.
+
+---
+
 ## 1. What this is
 
 A private-by-design training dashboard — public source repo, privately-hosted
@@ -2617,7 +2718,7 @@ Read-only, fully automatic. Ten seconds, once, in the morning.
 
 | Panel | Answers | Encoding |
 |---|---|---|
-| Most recent night (titled "Last night" v1.26–v1.29, renamed v1.30 — see the v1.30 amendment) | Sleep, RHR, HRV | **Built v1.26 without a band — deferred, see the v1.26 amendment.** Three raw values, a current-device-era-only value list, and one note stating no band exists yet, that Amazfit baselines don't transfer, and the computed date a band becomes possible. Gains the originally-specified "vs *his* band" once `rhr_baseline`/`hrv_baseline` (§7) have enough FR70 nights. **v1.30:** the reading's date is always shown next to the values, and a plain staleness line appears when `days_behind` exceeds the clamp's normal one-day lag — the panel never implies the reading is more current than it is. |
+| Most recent night (titled "Last night" v1.26–v1.29, renamed v1.30 — see the v1.30 amendment) | Sleep, RHR, HRV | **Built v1.26 without a band — deferred, see the v1.26 amendment.** Three raw values, a current-device-era-only value list, and one note stating no band exists yet, that Amazfit baselines don't transfer, and the computed date a band becomes possible. Gains the originally-specified "vs *his* band" once `rhr_baseline`/`hrv_baseline` (§7) have enough FR70 nights. **v1.30:** the reading's date is always shown next to the values, and a plain staleness line appears when `days_behind` exceeds the clamp's normal one-day lag — the panel never implies the reading is more current than it is. **v1.31:** the three sparklines (v1.29) render undistorted and unclipped at any viewport width, are taller for at-a-glance legibility, and support hover — nearest-point date and value in a tooltip matching the Block panel's register — see the v1.31 amendment for the four defects fixed and why an area fill stayed rejected. |
 | Today's session | What to do | Pulled from `sessions` for the exact date: `session_type`, `purpose`, `prescription`, `done`. No row for today renders as plain text saying so. |
 | Flag | Anything needing a decision | **At most one**, evaluated shin → illness → volume ramp, first hit wins (§7 `today_flag`, v1.26 amendment). If nothing qualifies, the slot is absent, not empty. **The volume-ramp rule is suppressed (not caveated) while either comparison window touches pre-8-Aug-2026 data — v1.27 amendment.** |
 

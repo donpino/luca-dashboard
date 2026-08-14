@@ -642,13 +642,26 @@ textarea {
 }
 
 /* Fixed height so a two-night series and a full device-era series read at
-   the same scale of attention — width fills the row via the SVG's own
-   viewBox + preserveAspectRatio="none" (§9's fixed-scale convention,
-   reused from .panel__chart). */
-.last-night__spark {
-  width: 100%;
-  height: 28px;
+   the same scale of attention (§9's fixed-scale convention, reused from
+   .panel__chart). v1.31 fix: the SVG's viewBox is built in JS from this
+   wrapper's own measured width (LastNightPanel.tsx's useMeasuredWidth) so
+   x/y scale stays uniform at any viewport instead of stretching a
+   fixed-aspect viewBox with preserveAspectRatio="none" (the v1.29 defect
+   — dots rendered as ovals, slopes squashed non-uniformly). `min-width: 0`
+   lets this flex child actually shrink to its constrained width on a
+   phone rather than overflowing and defeating the measurement.
+   `position: relative` anchors the hover tooltip below. */
+.last-night__spark-wrap {
+  position: relative;
   flex: 1;
+  min-width: 0;
+  height: 56px;
+}
+
+.last-night__spark {
+  display: block;
+  width: 100%;
+  height: 100%;
 }
 
 .last-night__spark-line {
@@ -660,6 +673,46 @@ textarea {
 
 .last-night__spark-dot {
   fill: var(--azzurro);
+}
+
+.last-night__spark-dot--hover {
+  fill: var(--text);
+}
+
+/* v1.31 hover addition — the vertical guide line pairs with the tooltip
+   below, the same axis-triggered register as the Block panel's shin chart
+   (shinVolumeChart.ts's `axisPointer: { type: 'line', lineStyle: { color:
+   LINE } }`). */
+.last-night__spark-guide {
+  stroke: var(--line);
+  stroke-width: 1;
+}
+
+/* v1.31 hover addition — same visual language as the Block panel's
+   ECharts tooltip (shinVolumeChart.ts: surface background, hairline
+   border, mono text, bold date line first). `pointer-events: none` so the
+   tooltip itself never steals the pointermove that positions it. Hidden
+   entirely on touch (no hover event to trigger it) — the current value
+   and min/max stay visible in the row regardless, unaffected by this
+   rule. */
+.last-night__spark-tooltip {
+  position: absolute;
+  bottom: 100%;
+  margin-bottom: 6px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 4px 8px;
+  font-size: 12px;
+  color: var(--text);
+  white-space: nowrap;
+  pointer-events: none;
+  z-index: 1;
+}
+
+.last-night__spark-tooltip strong {
+  display: block;
+  font-weight: 600;
 }
 
 /* Binding rule 1 (v1.29): every sparkline states its own min/max in text,

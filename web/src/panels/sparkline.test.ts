@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   hasEnoughPointsForLine,
+  nearestSparklineIndex,
   sparklineExtent,
   sparklinePoints,
   sparklineSegments,
@@ -89,5 +90,52 @@ describe('sparklinePoints', () => {
       { index: 1, value: 50 },
     ]
     expect(sparklinePoints(segment, 2, 50, 50, 100, 10)).toBe('0.00,5.00 100.00,5.00')
+  })
+
+  // v1.31: binding rule "inset the plot area by at least the stroke width
+  // plus the dot radius" — a point at the series extreme must land inside
+  // the viewBox, not on its edge, or the stroke/dot clips in half.
+  it('insets extreme points away from the viewBox edges instead of on them', () => {
+    const segment = [
+      { index: 0, value: 40 },
+      { index: 2, value: 60 },
+    ]
+    // width 108 x height 16, inset 4 -> plot area is [4,104] x [4,12], not
+    // [0,108] x [0,16]. min (40) sits at the plot area's bottom (y=12),
+    // max (60) at its top (y=4) — never on the outer viewBox edge.
+    expect(sparklinePoints(segment, 3, 40, 60, 108, 16, 4)).toBe('4.00,12.00 104.00,4.00')
+  })
+
+  it('keeps a flat series midline correct with a non-zero inset', () => {
+    const segment = [
+      { index: 0, value: 50 },
+      { index: 1, value: 50 },
+    ]
+    // plotHeight = 10 - 2*3 = 4, midline = 3 + 4/2 = 5.
+    expect(sparklinePoints(segment, 2, 50, 50, 108, 10, 3)).toBe('3.00,5.00 105.00,5.00')
+  })
+})
+
+describe('nearestSparklineIndex', () => {
+  it('finds the nearest index with no inset', () => {
+    expect(nearestSparklineIndex(0, 100, 0, 3)).toBe(0)
+    expect(nearestSparklineIndex(50, 100, 0, 3)).toBe(1)
+    expect(nearestSparklineIndex(100, 100, 0, 3)).toBe(2)
+  })
+
+  it('clamps out-of-range pointer positions to the nearest valid index', () => {
+    expect(nearestSparklineIndex(-40, 100, 0, 3)).toBe(0)
+    expect(nearestSparklineIndex(500, 100, 0, 3)).toBe(2)
+  })
+
+  it('accounts for inset when mapping a pointer position to an index', () => {
+    // plot area [4, 104] over 3 points -> point 0 at x=4, point 2 at x=104.
+    expect(nearestSparklineIndex(4, 108, 4, 3)).toBe(0)
+    expect(nearestSparklineIndex(54, 108, 4, 3)).toBe(1)
+    expect(nearestSparklineIndex(104, 108, 4, 3)).toBe(2)
+  })
+
+  it('always returns 0 for a single-point series', () => {
+    expect(nearestSparklineIndex(75, 100, 0, 1)).toBe(0)
   })
 })

@@ -53,6 +53,13 @@ export function hasEnoughPointsForLine(values: (number | null)[]): boolean {
 // series (so a gap keeps its width) rather than its position within the
 // segment. A flat series (min === max) renders as a horizontal midline
 // instead of dividing by zero.
+//
+// v1.31 amendment: `inset` shrinks the plotted area in from all four
+// viewBox edges (defaults to 0, preserving every pre-v1.31 call site and
+// test). A point placed exactly at x=0/x=width/y=0/y=height has its
+// stroke and dot clipped in half by the viewBox boundary — insetting by
+// at least the stroke width plus the dot radius (LastNightPanel.tsx's
+// `SPARK_INSET`) keeps every mark fully inside the visible box.
 export function sparklinePoints(
   segment: SparklinePoint[],
   totalPoints: number,
@@ -60,13 +67,30 @@ export function sparklinePoints(
   max: number,
   width: number,
   height: number,
+  inset = 0,
 ): string {
   const range = max - min
+  const plotWidth = width - inset * 2
+  const plotHeight = height - inset * 2
   return segment
     .map(({ index, value }) => {
-      const x = totalPoints > 1 ? (index / (totalPoints - 1)) * width : width / 2
-      const y = range === 0 ? height / 2 : height - ((value - min) / range) * height
+      const x = totalPoints > 1 ? inset + (index / (totalPoints - 1)) * plotWidth : width / 2
+      const y = range === 0 ? inset + plotHeight / 2 : inset + plotHeight - ((value - min) / range) * plotHeight
       return `${x.toFixed(2)},${y.toFixed(2)}`
     })
     .join(' ')
+}
+
+// v1.31 addition, hover support. Inverts sparklinePoints' x-placement to
+// find which data index a pointer x-coordinate (in the same viewBox
+// units) sits closest to. This is what makes the hover an "axis trigger"
+// like the Block panel's shin chart (shinVolumeChart.ts's
+// `tooltipFormatter`) rather than a per-dot hit target: moving the
+// pointer anywhere across the chart's width finds the nearest point by
+// position, so a viewer doesn't have to land a cursor on a 2-3px dot.
+export function nearestSparklineIndex(localX: number, width: number, inset: number, totalPoints: number): number {
+  if (totalPoints <= 1) return 0
+  const plotWidth = width - inset * 2
+  const raw = ((localX - inset) / plotWidth) * (totalPoints - 1)
+  return Math.min(totalPoints - 1, Math.max(0, Math.round(raw)))
 }
