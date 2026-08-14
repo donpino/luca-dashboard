@@ -12,7 +12,14 @@ from datetime import date
 import pytest
 
 from build_data import DATA_START, _or_none, _range_coverage, _range_start, _write_json
-from metrics import InsufficientData, last_night, session_for_date, shin_series, today_flag
+from metrics import (
+    InsufficientData,
+    last_night,
+    session_for_date,
+    shin_series,
+    today_flag,
+    week_checkin,
+)
 
 
 def test_range_start_day_based_ranges_are_trailing_n_days_ending_today():
@@ -164,6 +171,24 @@ def test_today_payload_json_roundtrip_carries_real_values(tmp_path):
     assert written["last_night"]["hrv_overnight"] is None
     assert written["session"]["session_type"] == "Medio"
     assert written["flag"] == {"kind": "shin", "date": "2026-08-13", "shin": 1}
+
+
+def test_week_payload_json_roundtrip_null_fields_stay_null(tmp_path):
+    # No weekly row, no sessions, no biometrics, no daily — every nullable
+    # field must survive the round-trip as an explicit null, matching the
+    # same discipline as today.json's own roundtrip test above.
+    payload = week_checkin([], [], [], [], [], date(2026, 8, 12))
+    out_path = tmp_path / "week.json"
+    _write_json(out_path, payload)
+    written = json.loads(out_path.read_text())
+
+    assert written["week_start"] == "2026-08-10"
+    assert written["week_label"] is None
+    assert written["planned_km"] is None
+    assert written["ramp_pct"] is None
+    assert written["wellness"]["shin_max"] is None
+    assert written["sessions"][0]["session_type"] is None
+    assert written["understated_volume_cutoff"] == "2026-08-08"
 
 
 def test_write_json_raises_on_a_leaked_coordinate_key(tmp_path):

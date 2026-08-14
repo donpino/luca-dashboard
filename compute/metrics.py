@@ -601,6 +601,141 @@ def today_flag(activities: list[dict], daily: list[dict], today: date) -> dict |
 
 
 # ---------------------------------------------------------------------------
+# §8.2 Week page — week_checkin ("Generate check-in"). Added spec v1.28.
+#
+# The Week page's terminating action (§3.3): the paste-ready text block
+# Luca sends his coach every Sunday. This function computes every number,
+# every coverage count, and the one data-quality flag the block reports —
+# the render layer (web/src/panels/checkinCopy.ts) only turns this dict
+# into Markdown text, it does not calculate anything (CLAUDE.md rule 3).
+# No composite score and no verdict field anywhere in the return value —
+# §3.1/§3.3, binding on this block specifically per the v1.28 amendment.
+# ---------------------------------------------------------------------------
+
+
+def _iso_week_start(today: date) -> date:
+    """Monday of the ISO week containing `today`. On a Sunday, that week
+    still ends today — Monday is 6 days back, never the coming week."""
+    return today - timedelta(days=today.weekday())
+
+
+def _weekly_row_for(weekly: list[dict], week_start: date) -> dict | None:
+    for row in weekly:
+        if _to_date(row["week_start"]) == week_start:
+            return row
+    return None
+
+
+def _mean_and_count(values: list[float | None]) -> tuple[float | None, int]:
+    """Mean over non-null values only, plus how many contributed. A missing
+    night is excluded from the mean and reduces the count — never averaged
+    as 0 (§5's null rule, applied here to biometrics rather than shin)."""
+    present = [v for v in values if v is not None]
+    if not present:
+        return None, 0
+    return mean(present), len(present)
+
+
+def week_checkin(
+    activities: list[dict],
+    daily: list[dict],
+    biometrics: list[dict],
+    sessions: list[dict],
+    weekly: list[dict],
+    today: date,
+) -> dict:
+    """§8.2 "Generate check-in" — DASHBOARD_SPEC.md §3.3, v1.28 amendment.
+
+    Week selection: the ISO week (Mon-Sun) containing `today`, always —
+    there is no picker (§8.2 v1.28: not stated in the spec's original
+    panel table, decided when this function was specified).
+
+    `weekly`/`sessions`/`daily`/`biometrics` are only ever consulted for
+    rows inside [week_start, week_end] (or, for `activities`, the two
+    weeks needed for the ramp) — callers may pass a pre-scoped slice or
+    the whole table; this function filters by date itself either way,
+    same convention as `shin_series`.
+
+    Tracking-break guard, distinct from `today_flag`'s suppression
+    (v1.27): that panel drops the number entirely because it is read
+    unattended with no surrounding context (§1, §3). This block is read
+    by Luca before he sends it and is addressed to the coach — hiding the
+    week's actual km would remove information the coach needs regardless
+    of its precision, so this function still returns every number and
+    instead sets `understated_volume: True` when the selected week or its
+    comparison week touches a pre-8-Aug-2026 date, reusing
+    `UNDERSTATED_VOLUME_CUTOFF` (no second hardcoded date, same precedent
+    as v1.16/v1.27). The frontend renders that flag as an explicit
+    caveat line, never silently.
+    """
+    week_start = _iso_week_start(today)
+    week_end = week_start + timedelta(days=6)
+    prev_week_start = week_start - timedelta(days=7)
+
+    weekly_row = _weekly_row_for(weekly, week_start)
+
+    actual_km = weekly_km(activities, week_start)
+    prev_actual_km = weekly_km(activities, prev_week_start)
+    ramp = ramp_pct(actual_km, prev_actual_km)
+
+    session_days = []
+    for i in range(7):
+        d = week_start + timedelta(days=i)
+        session = session_for_date(sessions, d)
+        session_days.append(
+            {
+                "date": d,
+                "session_type": session["session_type"] if session else None,
+                "done": session["done"] if session else None,
+            }
+        )
+
+    sleep_vals, rhr_vals, hrv_vals = [], [], []
+    for row in biometrics:
+        d = _to_date(row["date"])
+        if week_start <= d <= week_end:
+            sleep_vals.append(row.get("sleep_total_min"))
+            rhr_vals.append(row.get("rhr"))
+            hrv_vals.append(row.get("hrv_overnight"))
+    sleep_mean, sleep_n = _mean_and_count(sleep_vals)
+    rhr_mean, rhr_n = _mean_and_count(rhr_vals)
+    hrv_mean, hrv_n = _mean_and_count(hrv_vals)
+
+    shin_by_date = _shin_by_date(daily)
+    week_shin_values = [shin_by_date.get(week_start + timedelta(days=i)) for i in range(7)]
+    answered_shin = [v for v in week_shin_values if v is not None]
+    shin_max = max(answered_shin) if answered_shin else None
+
+    understated_volume = (
+        week_start < UNDERSTATED_VOLUME_CUTOFF or prev_week_start < UNDERSTATED_VOLUME_CUTOFF
+    )
+
+    return {
+        "week_start": week_start,
+        "week_end": week_end,
+        "week_label": weekly_row.get("week") if weekly_row else None,
+        "dates_label": weekly_row.get("dates_label") if weekly_row else None,
+        "actual_km": actual_km,
+        "planned_km": weekly_row.get("planned_km") if weekly_row else None,
+        "prev_actual_km": prev_actual_km,
+        "ramp_pct": None if isinstance(ramp, InsufficientData) else ramp,
+        "sessions": session_days,
+        "wellness": {
+            "sleep_mean_min": sleep_mean,
+            "sleep_n": sleep_n,
+            "rhr_mean": rhr_mean,
+            "rhr_n": rhr_n,
+            "hrv_mean": hrv_mean,
+            "hrv_n": hrv_n,
+            "shin_max": shin_max,
+            "shin_answered": len(answered_shin),
+        },
+        "understated_volume": understated_volume,
+        "understated_volume_cutoff": UNDERSTATED_VOLUME_CUTOFF,
+    }
+
+
+# ---------------------------------------------------------------------------
 # Coordinate-stripping gate — CLAUDE.md rule 1, DASHBOARD_SPEC.md §4/§11.
 #
 # Same tokenizing approach as ingest/explore.py's is_private_key, and for

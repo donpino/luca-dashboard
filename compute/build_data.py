@@ -40,6 +40,7 @@ from metrics import (  # noqa: E402
     session_for_date,
     shin_series,
     today_flag,
+    week_checkin,
 )
 
 DATA_DIR = Path(__file__).resolve().parent.parent / "web" / "public" / "data"
@@ -184,6 +185,59 @@ def build_today(db, today: date) -> dict:
     }
 
 
+def build_week(db, today: date) -> dict:
+    """§8.2 Week page — the "Generate check-in" block (v1.28). Scopes every
+    query to the two weeks week_checkin() actually needs (this week and
+    the previous one, for the ramp) rather than fetching whole tables —
+    unlike build_today/build_shin_series, which already read the full
+    history for other reasons."""
+    week_start = today - timedelta(days=today.weekday())
+    week_end = week_start + timedelta(days=6)
+    prev_week_start = week_start - timedelta(days=7)
+
+    activities = (
+        db.table("activities")
+        .select("date,type,distance_km")
+        .gte("date", prev_week_start.isoformat())
+        .lte("date", week_end.isoformat())
+        .execute()
+        .data
+    )
+    daily = (
+        db.table("daily")
+        .select("date,shin")
+        .gte("date", week_start.isoformat())
+        .lte("date", week_end.isoformat())
+        .execute()
+        .data
+    )
+    biometrics = (
+        db.table("biometrics")
+        .select("date,sleep_total_min,rhr,hrv_overnight")
+        .gte("date", week_start.isoformat())
+        .lte("date", week_end.isoformat())
+        .execute()
+        .data
+    )
+    sessions = (
+        db.table("sessions")
+        .select("date,session_type,done")
+        .gte("date", week_start.isoformat())
+        .lte("date", week_end.isoformat())
+        .execute()
+        .data
+    )
+    weekly = (
+        db.table("weekly")
+        .select("week_start,week,dates_label,planned_km")
+        .eq("week_start", week_start.isoformat())
+        .execute()
+        .data
+    )
+
+    return week_checkin(activities, daily, biometrics, sessions, weekly, today)
+
+
 def main():
     db = get_db()
     today = date.today()
@@ -200,6 +254,14 @@ def main():
     today_out_path = DATA_DIR / "today.json"
     _write_json(today_out_path, today_payload)
     print(f"wrote {today_out_path} — flag: {today_payload['flag']}")
+
+    week_payload = build_week(db, today)
+    week_out_path = DATA_DIR / "week.json"
+    _write_json(week_out_path, week_payload)
+    print(
+        f"wrote {week_out_path} — week {week_payload['week_start']}, "
+        f"understated_volume: {week_payload['understated_volume']}"
+    )
 
 
 if __name__ == "__main__":

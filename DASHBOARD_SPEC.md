@@ -1,4 +1,4 @@
-# Training Dashboard — Build Spec v1.27
+# Training Dashboard — Build Spec v1.28
 
 **Athlete:** Luca · **Campaign:** middle-distance, Foundation block → 2032
 **Status:** Phase 1 complete — `daily` table, RLS/grants, `/log`,
@@ -93,6 +93,15 @@ found live rendering an inflated ramp number — fixed, rule 3 is now
 suppressed (not caveated) whenever either 7-day window it compares
 touches a pre-8-Aug-2026 date, falling through to `None` exactly as if
 the rule hadn't matched.** See the v1.27 amendment below.
+**§8.2's "Generate check-in" is now built — the Week page's terminating
+action (§3.3), replacing its empty shell.** A lightweight-Markdown
+paste-ready block: week label/dates, volume vs planned, ramp %, session
+compliance Mon–Sun, and a wellness summary (means with night counts,
+shin max with coverage), no composite and no verdict (§3.1). The same
+pre-FR70 tracking-break hazard v1.27 suppressed in `today_flag` gets a
+caveat line here instead, deliberately — see the v1.28 amendment below
+for why the two panels take different fixes for the same hazard. The
+other six §8.2 panels remain `EmptyPanel`s.
 · **Date:** 14 Aug 2026
 
 This document is the contract. It goes in the repo root alongside `CLAUDE.md`.
@@ -1790,6 +1799,73 @@ amendment is scoped to `today_flag` rule 3 only.
 
 ---
 
+**Amendments in v1.28 (14 Aug 2026)** — §8.2's "Generate check-in" panel
+built, replacing its empty shell. The other six §8.2 panels stay
+`EmptyPanel`s, unchanged. Two items.
+
+**1. §13 open question 3 confirmed, not superseded — a wrong premise in
+the work order that specified this commit, caught before it reached the
+spec.** That work order stated the block should be plain text, no
+markdown, framing the choice as one the spec didn't already make. It
+does: §13 item 3 already recorded "v1: Markdown." The work order's
+plain-text framing rested on a specific, checkable mistake — it assumed
+a paste destination that renders literal asterisks and hashes as noise.
+The actual destination is a Claude conversation, which renders Markdown,
+so the same syntax is structure the reader benefits from. Caught and
+corrected before implementation, same precedent as v1.22/v1.23/v1.24: a
+wrong claim is marked wrong here, not quietly reworded. §13 item 3 is
+closed as **confirmed**, not moved out of the list — this amendment
+record is the more useful place for anyone re-deriving why to look.
+
+§13's original answer said only "Markdown," not how much. Scope decided
+in this same correction: lightweight only — one heading line, plain
+paragraphs, bullet lists, bold reserved for field labels, no tables (read
+on a phone before pasting), no emoji. Full six-piece contents recorded in
+§8.2 above, not repeated here.
+
+**2. The tracking-break hazard `today_flag` rule 3 hit in v1.27 applies
+here too, and gets a different fix, deliberately.** Both `weekly_km`/
+`ramp_pct` (§7) and this block's ramp line sum `activities.distance_km`
+over a range that can include pre-8-Aug-2026 Strava/Zepp-tracked days —
+the same confirmed, uneven undercount v1.7 documented and v1.27
+suppressed `today_flag` rule 3 over. This block does not suppress: it
+renders `actual_km`/`planned_km`/`ramp_pct` unconditionally and adds one
+caveat line when the selected week or its comparison week touches a
+pre-cutoff date, stating the affected figures are a floor and the ramp
+isn't a reliable comparison.
+
+The two panels differ in exactly the property v1.27's own reasoning
+turned on. `today_flag` is read unattended, with no surrounding context,
+for weeks at a time — a caveated number there teaches the one reader to
+mentally discount flags in general, including shin and illness, which
+are never data-quality-compromised. This block is read by Luca, with
+context, in the seconds before he sends it to a human coach who can ask
+a follow-up if a number looks off; removing the actual-km figure entirely
+would remove information the coach needs regardless of its precision.
+Same constant, `UNDERSTATED_VOLUME_CUTOFF` (§7/§8.3, v1.7/v1.16/v1.27) —
+no second hardcoded date — different render decision for a different
+reader.
+
+New `compute/metrics.py` function: `week_checkin(activities, daily,
+biometrics, sessions, weekly, today)` → the full check-in dict —
+`week_start`/`week_end`; `week_label`/`dates_label` from the matching
+`weekly` row, both `None` together if none exists; `actual_km`/
+`planned_km`/`prev_actual_km`/`ramp_pct` (reusing `weekly_km`/`ramp_pct`
+from §7 as-is, not reimplemented); `sessions`, 7 entries, Monday first,
+each `{date, session_type, done}` with both fields `None` when no
+`sessions` row exists for that date; `wellness`, with `sleep_mean_min`/
+`rhr_mean`/`hrv_mean` each paired with its own `_n` night count plus
+`shin_max` over answered days only and `shin_answered`; and
+`understated_volume`/`understated_volume_cutoff`. `compute/build_data.py`
+gained `build_week()`, writing `web/public/data/week.json`, scoped to
+the two weeks the ramp needs rather than fetching whole tables.
+`Week.tsx` fetches it and renders `CheckinPanel`; `web/src/panels/
+checkinCopy.ts` formats the dict into the Markdown block above and
+`web/src/panels/week.ts` mirrors the JSON contract — the same
+type/copy/render/build-step division v1.26 established for §8.1.
+
+---
+
 ## 1. What this is
 
 A private-by-design training dashboard — public source repo, privately-hosted
@@ -2411,6 +2487,69 @@ The only thing Luca touches is the `/log` link.
 | Wellness summary | Sleep mean, RHR, HRV, shin max, outlier nights |
 | **Generate check-in** | Produces the paste-ready block for Sunday |
 
+**Generate check-in — content, binding, added v1.28.** Not specified by
+the panel table above; specified here, with the same standing as any
+other binding decision in this file (CLAUDE.md rule 13). Week selection
+is the ISO week (Mon–Sun) containing the day the page is viewed — on a
+Sunday, that week is the one ending today. No week picker.
+
+The block is lightweight Markdown — confirmed, not newly decided, by
+§13 open question 3 (see the v1.28 amendment for why an implementation
+brief that questioned this was wrong). The paste destination is a
+Markdown-rendering chat client, so literal `#`/`**`/`-` syntax is
+structure the reader benefits from, not noise. One heading line, plain
+paragraphs, two bullet lists, no tables (read on a phone before
+pasting), no emoji. Bold marks a field label only (`**Volume:**`,
+`**Sleep:**`, …) — never emphasis, never a signal that a number is good
+or bad.
+
+Six pieces of content, in order:
+
+1. **Week label and date range** — `weekly.week` / `weekly.dates_label`
+   when a `weekly` row exists for the week's Monday; the ISO
+   `week_start`–`week_end` otherwise.
+2. **Volume** — actual km, summed from `activities` exactly as
+   `weekly_km` (§7) defines it, against `weekly.planned_km`. A week with
+   no `weekly` row states planned is unknown; it never omits the line or
+   prints 0.
+3. **Ramp** — this week's actual km vs the previous calendar week's, as
+   a percentage (`ramp_pct`, §7, reused as-is — not a second formula). A
+   zero-or-missing previous week renders as unknown, never 0% or ∞%,
+   same as `ramp_pct`'s own `InsufficientData` contract.
+4. **Session compliance** — one line per day, Monday through Sunday:
+   date, `sessions.session_type`, `sessions.done`. A date with no
+   `sessions` row says so explicitly; it is not skipped.
+5. **Wellness** — mean sleep, mean RHR, mean HRV across the week's
+   `biometrics` rows, each stated with the count of nights it averages
+   over; a night with no `biometrics` row (§5's non-wear rule) is
+   excluded from both the mean and the count, never averaged as 0. Shin
+   is the **max** over the week's *answered* days only, stated with
+   coverage as `n answered / 7` — an unanswered day is never counted
+   toward the max and never coerced to 0 (§5's null rule).
+6. **Data-quality line** — present only when the selected week or its
+   ramp-comparison week (the preceding calendar week) contains any date
+   before `UNDERSTATED_VOLUME_CUTOFF` (§7/§8.3's v1.7 constant, reused —
+   no second hardcoded date). States plainly that the affected volume
+   figures are a floor, not a measurement, and that the ramp % above is
+   not a reliable comparison. **Deliberately a caveat, not a
+   suppression** — the opposite of `today_flag` rule 3's v1.27 fix for
+   the same underlying hazard. See the v1.28 amendment for why the two
+   panels take different fixes.
+
+**No composite score, no verdict, no adjective, anywhere in this
+block — binding, ties directly to §3.1 and §3.3.** The block reports
+numbers and coverage counts only. Judging the week is the coach's job on
+the other end of the paste, not something this dashboard renders on
+Luca's behalf — §3.1's finding that self-level/summary feedback made
+performance worse in over a third of studied interventions is precisely
+why. §3.3 is why the block exists at all: a number the coach can act on,
+never a score about how the week went.
+
+Every number in the block is computed and tested in
+`compute/metrics.py`'s `week_checkin()`; the frontend
+(`web/src/panels/checkinCopy.ts`) only formats the returned dict into
+the Markdown block above (CLAUDE.md rule 3).
+
 ### 8.3 Block — the mesocycle
 | Panel | Answers |
 |---|---|
@@ -2660,7 +2799,11 @@ responses* used as test fixtures, not hand-written stand-ins.
 2. Retention: raw Garmin JSON archived indefinitely, or pruned after N years?
    Current answer: keep — it is ~30 MB/year and re-analysis needs it.
 3. Does the check-in generator output Markdown for pasting, or write directly to
-   a `check_ins` table the coach reads? v1: Markdown.
+   a `check_ins` table the coach reads? **Confirmed and closed, v1.28: Markdown**,
+   lightweight only (one heading, plain paragraphs, bullet lists, bold field
+   labels, no tables, no emoji) — the destination is a Markdown-rendering chat
+   client. An implementation brief questioned this as still-open and was wrong
+   to; see the v1.28 amendment for the correction and the full content spec in §8.2.
 4. *(added v1.7)* `weekly.actual_km` (Airtable-ported, §5) is more
    accurate than `activities`-derived `weekly_km` for the 20 Jul 2026
    onward overlap period, since `activities.distance_km` on
