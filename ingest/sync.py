@@ -76,12 +76,20 @@ TYPE_MAP = {
     "walking": "other",
     "hiking": "other",
     "yoga": "other",
+    # parentTypeId 29 (fitness equipment), same category as
+    # strength_training — confirmed against the 14 Aug 2026 incident
+    # activity (0 distance, avgHR 136, "Cardio"): gym cardio work, not the
+    # stationary bike (that's a separate indoor_cycling activity, already
+    # mapped to 'cycling' above). See DASHBOARD_SPEC.md incident log.
+    "indoor_cardio": "other",
 }
 
 
 class UnmappedActivityTypeError(RuntimeError):
-    """A Garmin typeKey has no entry in TYPE_MAP — spec §5 requires this to
-    abort the run, never fall through to a silent 'other'."""
+    """A Garmin typeKey has no entry in TYPE_MAP. Spec §5 (v1.3, amended
+    v1.34) requires this activity to be skipped and named, never silently
+    defaulted to 'other' — but per the 15 Aug 2026 incident, it must no
+    longer abort the whole run (see sync_activities)."""
 
 
 def normalize_type(type_key: str) -> str:
@@ -90,8 +98,8 @@ def normalize_type(type_key: str) -> str:
     except KeyError:
         raise UnmappedActivityTypeError(
             f"Garmin typeKey {type_key!r} has no TYPE_MAP entry. Spec §5 "
-            "(v1.3) requires a hard error here, never a silent default to "
-            "'other' — add an explicit mapping before re-running."
+            "(v1.3) requires never defaulting silently to 'other' — add an "
+            "explicit mapping before this activity can be written."
         ) from None
 
 
@@ -240,7 +248,23 @@ def sync_activities(client, db: Client, d: date, session_map: dict[str, str]) ->
         # endpoint — spec §5. type/id are top-level siblings of summaryDTO
         # on that response, not nested inside it.
         detail = client.get_activity(activity_id)
-        canonical_type = normalize_type(detail["activityTypeDTO"]["typeKey"])
+        type_key = detail["activityTypeDTO"]["typeKey"]
+        try:
+            canonical_type = normalize_type(type_key)
+        except UnmappedActivityTypeError:
+            # Skip-and-warn, not run-fatal (spec v1.34, 15 Aug 2026
+            # incident): one unmapped typeKey must not stop biometrics and
+            # every later activity/day from landing. The activity is never
+            # written and never silently defaulted to 'other' — it is
+            # named here so a human can add the mapping, then recovered by
+            # a --from/--to backfill once they do.
+            print(
+                f"::warning::{ds}: activity {activity_id} has unmapped "
+                f"Garmin typeKey {type_key!r} — skipped, not written. Add "
+                "a TYPE_MAP entry in ingest/sync.py and re-run "
+                f"`sync.py --from {ds} --to {ds}` to recover it."
+            )
+            continue
 
         summary = detail["summaryDTO"]
         distance_m = summary.get("distance")

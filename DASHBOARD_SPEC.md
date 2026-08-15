@@ -1,4 +1,4 @@
-# Training Dashboard — Build Spec v1.33
+# Training Dashboard — Build Spec v1.34
 
 **Athlete:** Luca · **Campaign:** middle-distance, Foundation block → 2032
 **Status:** Phase 1 complete — `daily` table, RLS/grants, `/log`,
@@ -144,7 +144,19 @@ the understated-volume caveat, which describes the volume/ramp figures
 only. Easy-band compliance and Medio control remain `EmptyPanel`s — both
 need the `laps` table, still Phase 1.5 (§12). See the v1.33 amendment
 below.
-· **Date:** 14 Aug 2026
+**Incident, 15 Aug 2026: the scheduled `sync.yml` run failed on an
+unmapped Garmin `typeKey` (`indoor_cardio`), not the pinned dependency
+versions (ruled out) or Garmin auth/token cache (unaffected).**
+`TYPE_MAP` gains `"indoor_cardio": "other"`, confirmed against the
+actual activity rather than assumed from its name. More significantly,
+an unmapped `typeKey` is now skipped-and-warned per activity instead of
+aborting the whole `sync.py` run — a deliberate reversal, made because
+run-fatal behaviour risked silently freezing the dashboard for the
+remainder of the four-week unattended window (`RUNBOOK.md`) on the next
+unfamiliar activity type. §5's binding rule that an unmapped type is
+never silently defaulted to `'other'` is unchanged. See the v1.34
+amendment below.
+· **Date:** 15 Aug 2026
 
 This document is the contract. It goes in the repo root alongside `CLAUDE.md`.
 Anything not defined here is an open question, not an implementation detail to
@@ -2328,6 +2340,73 @@ and `.week-wellness-stat__*`. No change to `checkinCopy.ts`'s existing
 behaviour (`formatKm`/`formatPct` exported, not modified) or to any
 `compute/`/`ingest/` file.
 
+**Amendments in v1.34 (15 Aug 2026)** — incident: the scheduled
+15 Aug 05:00 UTC `sync.yml` run failed. `pip install -r
+ingest/requirements.txt` (the 14 Aug handover commit's pinned
+`garminconnect==0.3.9`/`python-dotenv==1.2.2`/`supabase==2.31.0`) was the
+prime suspect and is **ruled out** — it resolved and installed cleanly on
+the runner in ~8s. The actual failure was `python sync.py` raising
+`UnmappedActivityTypeError` on Garmin's `indoor_cardio` typeKey (activity
+23977151426, 14 Aug 2026), which had no `TYPE_MAP` entry — working
+exactly as pre-v1.34 §5 specified, but with a blast radius that turned
+out to be wrong for an unattended run: the whole process aborted, so
+that day's remaining activities, every later day in the window, and the
+`deploy.yml` `workflow_run` trigger (gated on sync success) all skipped.
+The dashboard would have silently frozen on 13 Aug's data for up to four
+weeks (`RUNBOOK.md`) had this recurred with no maintainer able to
+intervene.
+
+**Two changes, both to `ingest/sync.py` only — `strava_import.py`'s
+separate `TYPE_MAP`/`UnmappedActivityTypeError` is untouched, since that
+path runs once, interactively, with no unattended run to protect:**
+
+1. **`TYPE_MAP` gains `"indoor_cardio": "other"`.** Confirmed against
+   the actual activity, not inferred from the name: `parentTypeId 29`,
+   the same fitness-equipment category as `strength_training`
+   (`parentTypeId` also 29); 0.0 km distance; avgHR 136; Garmin's own
+   label "Cardio". This is gym cardio work, not the stationary bike —
+   that's a separate `indoor_cycling` activity on the same day
+   (`parentTypeId 2`), already correctly mapped to `'cycling'`. Bucketing
+   it with `strength_training`/`walking`/`hiking`/`yoga` under `'other'`
+   is the same "not running, not cycling" rule those four already
+   follow, not a new category.
+
+2. **An unmapped `typeKey` is now skipped and named, never run-fatal.**
+   `sync_activities` catches `UnmappedActivityTypeError` per activity,
+   prints a `::warning::` GitHub Actions annotation naming the typeKey,
+   activity ID, and date (surfaces on the run summary), and continues —
+   that one activity is not written, but biometrics and every other
+   activity for that day and all following days still land, and the run
+   still exits 0 so `deploy.yml` still fires. §5's `type` vocabulary
+   rule is unchanged and still binding: an unmapped value is still never
+   passed through and never silently defaulted to `'other'` — it is
+   simply absent until a human adds the mapping and reruns
+   `sync.py --from <date> --to <date>` to recover it (v1.4's
+   idempotent-upsert backfill path, unchanged).
+
+   This is a deliberate reversal of the incident brief's original
+   instruction not to touch sync logic — that instruction assumed sync
+   was healthy going into the diagnosis. Losing up to four weeks of
+   unattended ingest to protect against one mislabelled activity is the
+   wrong trade during the 14 Aug–10 Sep gap; the spec's actual
+   requirement (never silently default to `'other'`) was never about
+   killing the whole run, and nothing else in `sync.py` — the trailing
+   3-day window, the today/source-boundary clamps, the sessions lookup
+   and repair pass — changed.
+
+   Recovered by this incident's backfill: `sync.py --from 2026-08-14
+   --to 2026-08-14`, run manually once the mapping above was added.
+   14 Aug's biometrics and two of its three activities had already
+   synced before the abort (idempotent upsert, unaffected); only the
+   `indoor_cardio` activity was actually missing, and is now present.
+   12–13 Aug were never affected.
+
+`ingest/tests/test_sync.py` gains coverage for both changes: skip-and-warn
+leaves the unmapped activity unwritten and doesn't raise, a mapped
+activity in the same day still writes normally, `indoor_cardio` resolves
+to `'other'`, and a `TYPE_MAP` value-set assertion guards against a
+future typo landing outside `{'running', 'cycling', 'other'}`.
+
 ---
 
 ## 1. What this is
@@ -2618,11 +2697,27 @@ boundary in §6.
 restricted to `'running'` | `'cycling'` | `'other'`. Both ingest paths
 normalise to this vocabulary at write time: Garmin's
 `activityTypeDTO.typeKey` and Strava's export type string are each
-mapped onto it. An unmapped value is a hard error at ingest — never
-passed through unchanged, never defaulted to `'other'`. This is what
-makes rule 6 (cycling excluded from `weekly_km`) actually enforceable:
-the metric's type filter only works if `type` can't silently contain a
-string the filter doesn't match.
+mapped onto it. An unmapped value is never passed through unchanged and
+never silently defaulted to `'other'`. This is what makes rule 6
+(cycling excluded from `weekly_km`) actually enforceable: the metric's
+type filter only works if `type` can't silently contain a string the
+filter doesn't match.
+
+**As of v1.34, an unmapped `typeKey` is skipped and named, not run-fatal
+— corrected from the original "hard error at ingest" wording above,
+which described `sync.py`'s pre-v1.34 behaviour (see the v1.34
+amendment below for the incident that changed this).** The Garmin
+ingest path (`ingest/sync.py normalize_type`/`sync_activities`) still
+never writes an unmapped activity and never defaults it to `'other'` —
+that half of the rule is unchanged and still enforces rule 6 — but it no
+longer raises past the single activity. It's caught in the per-activity
+loop, printed as a `::warning::` GitHub Actions annotation naming the
+`typeKey`, activity ID, and date, and skipped; biometrics for that day
+and every later day in the run still land, and the run still exits 0.
+The Strava import path (`ingest/strava_import.py`, a one-time archive
+backfill only) is unaffected and still hard-errors — it runs once,
+interactively, so there's no unattended run for a silent skip to
+protect.
 
 **Strava-sourced rows carry structural NULLs, not missing
 measurements — for a mix of two reasons, corrected in v1.5.**

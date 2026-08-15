@@ -91,9 +91,15 @@ def make_activity_detail(activity_id: int, type_key: str = "running") -> dict:
 class FakeGarminClient:
     """Serves one canned activity stub per date, keyed by activity_id."""
 
-    def __init__(self, activities_by_date: dict[str, list[int]], type_key: str = "running"):
+    def __init__(
+        self,
+        activities_by_date: dict[str, list[int]],
+        type_key: str = "running",
+        type_keys_by_id: dict[int, str] | None = None,
+    ):
         self.activities_by_date = activities_by_date
         self.type_key = type_key
+        self.type_keys_by_id = type_keys_by_id or {}
 
     def get_activities_fordate(self, ds: str) -> dict:
         ids = self.activities_by_date.get(ds, [])
@@ -104,4 +110,5 @@ class FakeGarminClient:
         }
 
     def get_activity(self, activity_id: int) -> dict:
-        return make_activity_detail(activity_id, self.type_key)
+        type_key = self.type_keys_by_id.get(activity_id, self.type_key)
+        return make_activity_detail(activity_id, type_key)

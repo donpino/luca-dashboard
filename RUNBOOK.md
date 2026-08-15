@@ -34,8 +34,9 @@ run at all for today's date sitting at the top of the list. A red X means
 it ran and failed (see §3 for what that looks like per-workflow). No run
 at all is rarer and means the schedule itself didn't fire.
 
-You do not need to open the run's logs to know whether things are fine.
-The check mark is enough.
+You do not need to open the run's logs to know whether the site is
+current. The check mark is enough for that. The one exception — a single
+missing activity, not a stale site — is covered in §4 item 7.
 
 ## 2. "Stale" vs. "down" on the Today page
 
@@ -160,6 +161,36 @@ the gap.
    signal at camp** — re-doing email OTP on poor camp signal is
    inconvenient but not damaging; nothing behind it (the data, Supabase)
    depends on this session, it only gates who can view the page.
+
+7. **Incident, 15 August — sync failed overnight, fixed same day. Not the
+   pin from item 5 above; a different cause, one worth knowing about
+   because it can recur during this gap.** Garmin returned an activity
+   type (`indoor_cardio`, an indoor gym cardio session) the ingest script
+   had never seen before and had no mapping for. By design, an unknown
+   activity type used to abort the *entire* sync run rather than guess —
+   which meant that morning's biometrics, every other activity that day,
+   and the site rebuild all got skipped, not just the one odd activity.
+   Fixed same day: (1) that specific type is now mapped, and the missed
+   day's data was backfilled; (2) more importantly, the behaviour
+   changed — an unrecognised activity type from here on **skips just
+   that one activity** (named in a warning on the run's summary page)
+   and lets the rest of the day, and every following day, sync normally.
+   The run still shows green.
+
+   **What this means for a phone check during the gap:** a green
+   "Garmin sync" run is still reliable proof the site is current
+   (§1) — that hasn't changed. What *can* now happen invisibly is a
+   single missing activity, e.g. a new class type or piece of gym
+   equipment Garmin logs under a name never seen before. If a specific
+   session looks missing from the site but the day around it looks
+   otherwise normal, open that day's "Garmin sync" run and look for a
+   line starting `::warning::` naming the activity and its type — that
+   confirms it, and there's nothing to do about it from a phone. The
+   fix (one line added to `ingest/sync.py`'s `TYPE_MAP`, plus running
+   `sync.py --from <date> --to <date>` to pull that activity in) is a
+   two-minute job once someone's back at a laptop in September — nothing
+   is lost by waiting, Garmin keeps the activity on its own servers in
+   the meantime.
 
 ## 5. Safe to ignore until September
 
