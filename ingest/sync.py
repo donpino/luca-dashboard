@@ -82,6 +82,10 @@ TYPE_MAP = {
     # stationary bike (that's a separate indoor_cycling activity, already
     # mapped to 'cycling' above). See DASHBOARD_SPEC.md incident log.
     "indoor_cardio": "other",
+    # First seen 7 Sep 2026 (activity 24276871331), skipped by the v1.34
+    # skip-and-warn path during the v1.35 backfill. Not running, not
+    # cycling — counts toward strain, never toward weekly_km (rule 6).
+    "volleyball": "other",
 }
 
 
