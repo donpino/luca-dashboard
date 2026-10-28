@@ -105,9 +105,9 @@ the gap.
    losing laptop access: open that GitHub notification setting once and
    confirm it isn't "Don't notify."** This can't be checked or changed
    from this session — it's a personal account setting, not a repo file.
-   Also confirmed: a scheduled workflow only auto-disables after 60 days
-   of total repo silence — the 4-week gap is well inside that, not a risk
-   here.
+   **Corrected 28 Oct 2026:** this item originally said the 60-day
+   scheduled-workflow auto-disable was not a risk. That was wrong — it
+   is what stopped the sync in October 2026. See §8.
 
 3. **Garmin token: no fixed expiry found, refresh is automatic and
    persisted.** The cached login token is a directory saved between runs
@@ -197,8 +197,6 @@ the gap.
 - **Backup failures**, if they ever show a red X. Nothing user-facing
   breaks; it only means one night's database snapshot is missing. Worth a
   glance in September, not worth reacting to mid-exam.
-- **The 60-day scheduled-workflow auto-disable.** Confirmed inapplicable —
-  this gap is 4 weeks, the disable threshold is 60 days of total silence.
 - **A Cloudflare Access re-login prompt.** Expected, not a sign of
   breakage — see §4 item 6.
 - **wrangler / GitHub Action version numbers.** All confirmed pinned;
@@ -263,6 +261,45 @@ or trigger the "Deploy" workflow manually from the Actions tab
 **5. Confirm** — open the site, confirm the Today page shows the actual
 current date's session and last night's real numbers, and confirm the
 Week page's volume picture includes the camp block.
+
+---
+
+## 8. Things that stop on their own (added 28 Oct 2026)
+
+**1. The 60-day scheduled-workflow auto-disable — it does apply.** GitHub
+disables every scheduled workflow in a public repo after 60 days with no
+repository activity (no commits). The nightly sync's own runs don't count
+as activity. This is what happened in October 2026: "Garmin sync" and
+"Nightly backup" showed as *disabled_inactivity* and simply stopped
+running. There is no red X; the runs just stop appearing.
+- **What it looks like:** the Actions tab has no new "Garmin sync" run
+  after 06:00, and the workflow page shows a banner saying it was
+  disabled.
+- **Fix:** on GitHub, Actions → pick the workflow ("Garmin sync", then
+  "Nightly backup") → **Enable workflow**. Then backfill the missed days
+  (§7 step 3).
+- **Prevention:** any commit to `main` resets the 60-day clock. If two
+  months pass with no development, push any small commit.
+
+**2. The "Sync now" button's GitHub token expires around 28 Oct 2027.**
+The Today page's sync button (spec §4, v1.36) dispatches `sync.yml`
+through a fine-grained GitHub token stored as the Cloudflare Worker
+secret `GITHUB_DISPATCH_TOKEN`. It was created on 28 Oct 2026 with
+about a one-year expiry. The exact date is shown at
+github.com/settings/personal-access-tokens.
+- **What it looks like:** pressing the button shows "Sync failed — try
+  later". The 06:00 automatic sync is unaffected, because it doesn't use
+  this token.
+- **Fix:**
+  1. On GitHub, regenerate the token: Settings → Developer settings →
+     Personal access tokens → Fine-grained tokens → the
+     "luca-dashboard sync button" token → **Regenerate token**. Keep the
+     same settings: only the `donpino/luca-dashboard` repository, and
+     the Actions permission set to read and write.
+  2. In Cloudflare: Workers & Pages → luca-dashboard → Settings →
+     Variables and Secrets → `GITHUB_DISPATCH_TOKEN` → **Edit**, paste the
+     new value (type Secret) → Deploy.
+- `ACCESS_TEAM_DOMAIN` and `ACCESS_AUD` don't expire.
 
 ---
 

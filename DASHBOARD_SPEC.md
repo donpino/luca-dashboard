@@ -2693,6 +2693,9 @@ secrets, set in the Cloudflare dashboard and never in the repo (CLAUDE.md
 rule 8): `GITHUB_DISPATCH_TOKEN` (fine-grained PAT, this repository only,
 *Actions: read and write*, nothing else), `ACCESS_TEAM_DOMAIN`,
 `ACCESS_AUD`. Missing token → 503, rendered as "Sync isn't set up yet".
+The PAT was created 28 Oct 2026 with a ~1-year expiry (≈ 28 Oct 2027);
+once expired GitHub rejects the dispatch and the button shows "Sync
+failed", while the scheduled sync is unaffected. Renewal steps: RUNBOOK §8.
 
 ## 5. Data model (Supabase)
 
