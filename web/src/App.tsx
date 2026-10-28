@@ -3,31 +3,55 @@
 // never changes and no history entry is pushed (DASHBOARD_SPEC.md v1.25
 // amendment, superseding the v1.9/v1.10 client-router plan for now: a URL
 // route would need the host to serve index.html for unknown paths, and a
-// mistake there is an unfixable 404 during an unmaintained window). Lab
-// still doesn't exist (§12, Phase 5+). This bundle must never import
-// @supabase/supabase-js or anything under src/log/ — see CLAUDE.md and
-// DASHBOARD_SPEC.md §4 on bundle isolation; Nav's Log item is a plain
-// anchor for exactly this reason, not a fourth tab.
+// mistake there is an unfixable 404 during an unmaintained window). The
+// v1.35 score detail pages follow the same rule: `detail` state on top of
+// the Today tab. Lab still doesn't exist (§12, Phase 5+) and renders as a
+// disabled tab. This bundle must never import @supabase/supabase-js or
+// anything under src/log/ — see CLAUDE.md and DASHBOARD_SPEC.md §4 on
+// bundle isolation; the Today header's "+" is a plain anchor to /log/ for
+// exactly this reason.
 import { useState } from 'react'
 import Nav, { type Tab } from './components/Nav'
 import Today from './pages/Today'
 import Week from './pages/Week'
 import Block from './pages/Block'
+import ScoreDetail from './pages/ScoreDetail'
+import type { ScoreKey } from './panels/scores'
 
 export default function App() {
   const [tab, setTab] = useState<Tab>('today')
+  const [detail, setDetail] = useState<ScoreKey | null>(null)
+
+  const select = (next: Tab) => {
+    setDetail(null)
+    setTab(next)
+  }
+  const open = (key: ScoreKey) => {
+    setDetail(key)
+    window.scrollTo(0, 0)
+  }
 
   return (
     <div className="app-shell">
-      <Nav active={tab} onSelect={setTab} />
       <main className="app-main">
         <div className="page">
-          <h1>Luca — Training Dashboard</h1>
-          {tab === 'today' && <Today />}
-          {tab === 'week' && <Week />}
-          {tab === 'block' && <Block />}
+          {tab === 'today' && detail === null && <Today onOpen={open} />}
+          {tab === 'today' && detail !== null && <ScoreDetail kind={detail} onBack={() => setDetail(null)} />}
+          {tab === 'week' && (
+            <div className="screen">
+              <h1 className="detail-head__title">Week</h1>
+              <Week />
+            </div>
+          )}
+          {tab === 'block' && (
+            <div className="screen">
+              <h1 className="detail-head__title">Block</h1>
+              <Block />
+            </div>
+          )}
         </div>
       </main>
+      <Nav active={tab} onSelect={select} />
     </div>
   )
 }

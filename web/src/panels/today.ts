@@ -60,9 +60,19 @@ export interface VolumeRampFlag {
 
 export type TodayFlag = ShinFlag | IllnessFlag | VolumeRampFlag
 
+// §8.1 v1.35 "Your cards" — pre-computed in build_today() (rule 3).
+export interface TodayCards {
+  rhr_band: [number, number] | null
+  hrv_means: { mean_7d: number | null; mean_30d: number | null } | null
+  weekly_km: number
+  week_start: string
+  shin_latest: { date: string; shin: 0 | 1 | 2 | 3 } | null
+}
+
 export interface TodayResponse {
   date: string
   last_night: LastNight | null
   session: TodaySession | null
   flag: TodayFlag | null
+  cards: TodayCards
 }

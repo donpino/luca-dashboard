@@ -5,10 +5,13 @@ from fakes import FakeGarminClient, FakeSupabase
 
 from sync import (
     TYPE_MAP,
+    _gmt_iso,
+    _local_wallclock,
     build_session_map,
     normalize_type,
     repair_session_links,
     sync_activities,
+    sync_hr_daily,
 )
 
 SESSION_A = "11111111-1111-1111-1111-111111111111"
@@ -157,3 +160,44 @@ def test_repair_pass_leaves_row_null_with_no_matching_session():
 
     assert (linked, still_null) == (0, 1)
     assert db.table("activities").rows[101]["session_id"] is None
+
+
+# --- score inputs (spec §5/§6, v1.35) -------------------------------------
+
+
+def test_sync_activities_writes_hr_stream_without_nulls_or_polyline():
+    db = FakeSupabase()
+    client = FakeGarminClient({"2026-08-12": [101]})
+    sync_activities(client, db, date(2026, 8, 12), {})
+    assert db.table("activity_hr").rows[101]["samples"] == [[1000, 140], [3000, 142]]
+    assert client.last_details_maxpoly == 0  # never ask Garmin for a polyline
+
+
+def test_sync_hr_daily_drops_null_readings():
+    db = FakeSupabase()
+    sync_hr_daily(FakeGarminClient({}), db, date(2026, 8, 12))
+    row = db.table("hr_daily").rows["2026-08-12"]
+    assert row["samples"] == [[1000, 55], [241000, 58]]
+    assert row["device"] == "fr70"
+
+
+def test_sync_hr_daily_skips_non_wear_day():
+    class NoHR(FakeGarminClient):
+        def get_heart_rates(self, ds):
+            return {"heartRateValues": [[1000, None]]}
+
+    db = FakeSupabase()
+    sync_hr_daily(NoHR({}), db, date(2026, 8, 12))
+    assert db.table("hr_daily").rows == {}
+
+
+def test_sleep_window_reads_local_timestamp_as_wall_clock():
+    # fixtures/garmin_sleep_2026-08-08.json: sleepStartTimestampLocal
+    # 1786150633000 ms = 2026-08-08T00:57:13 read as UTC wall-clock; the GMT
+    # field is 7_200_000 ms (2 h, CEST) earlier, so local - GMT checks out.
+    assert _local_wallclock(1786150633000) == "2026-08-08T00:57:13"
+    assert _local_wallclock(None) is None
+
+
+def test_start_ts_is_utc_aware():
+    assert _gmt_iso("2026-08-08T17:27:34.0") == "2026-08-08T17:27:34+00:00"

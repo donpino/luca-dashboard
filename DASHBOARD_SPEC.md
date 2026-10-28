@@ -1,4 +1,4 @@
-# Training Dashboard — Build Spec v1.34
+# Training Dashboard — Build Spec v1.35
 
 **Athlete:** Luca · **Campaign:** middle-distance, Foundation block → 2032
 **Status:** Phase 1 complete — `daily` table, RLS/grants, `/log`,
@@ -2407,6 +2407,60 @@ activity in the same day still writes normally, `indoor_cardio` resolves
 to `'other'`, and a `TYPE_MAP` value-set assertion guards against a
 future typo landing outside `{'running', 'cycling', 'other'}`.
 
+**Amendments in v1.35 (28 Oct 2026)** — the athlete reverses decision 7:
+three composite scores — **Recovery, Strain, Sleep** — are added, and the
+frontend is redesigned around them in a WHOOP/NOOP-style visual language.
+Decided in conversation on 28 Oct 2026 after reviewing a Figma mockup
+(file "Training dashboard — mockup v2", frames *Today v2 — liquid* and
+*Detail v2 — Recovery / Strain / Sleep*). What changed, section by
+section:
+
+- **§2 decision 7 and §3.1** — the blanket ban on composite scores is
+  replaced by an explicit allowance for exactly these three. The
+  Kluger & DeNisi evidence in §3.1 is kept, not deleted: it is the
+  reason every score must open onto its contributors (§8.1), so a score
+  is never shown without the task-level inputs that moved it. Any fourth
+  composite still needs its own amendment. CLAUDE.md rule 2 is
+  rewritten to match.
+- **Formulas (§7)** are adapted from NOOP's Charge / Effort / Rest
+  (github.com/ryanbr/noop, PolyForm Noncommercial 1.0.0, Copyright 2026
+  NoopApp): its published weights, constants and logistic anchor, in an
+  independent Python implementation. Not reverse-engineered from WHOOP —
+  WHOOP's model is proprietary and was not used. Deliberate differences
+  from NOOP, each stated in §7: a 30-day windowed baseline (mean + mean
+  absolute deviation) instead of NOOP's EWMA with early-life adaptation,
+  so every value is hand-checkable in a test; HRV compared in natural-log
+  space (the endurance-athlete HRV-monitoring convention, Plews/Buchheit);
+  skin temperature and overnight HR slope dropped because the FR70 does
+  not measure them, with the remaining weights renormalized exactly as
+  NOOP does for any absent term; Strain on WHOOP's 0–21 axis rather than
+  NOOP's rescaled 0–100.
+- **`HR_MAX = 201`** — the athlete's highest repeated max (199–201 bpm
+  across several Amazfit sessions, `activities.max_hr`, `source =
+  'strava'`); the FR70 has reached 191 so far. Tanaka (208 − 0.7 × 23 =
+  192) was rejected in favour of a repeatedly measured value. Revisit if
+  the FR70 records higher.
+- **New raw inputs (§5, §6, migration 009):** `biometrics.sleep_start_local`
+  / `sleep_end_local`, `activities.start_ts`, and two new tables,
+  `hr_daily` (Garmin all-day HR, 2-minute cadence) and `activity_hr`
+  (per-second HR stream per activity). Ingest stores raw samples only;
+  every derivation is in `compute/metrics.py` (CLAUDE.md rule 3).
+  Garmin's own per-activity `hrTimeInZone_*` fields were considered and
+  rejected: they use the athlete's Garmin-configured zone bounds
+  (101/121/139/156/173 bpm on 28 Oct 2026), not the %HRR cut-offs §7
+  defines, so activity time and the rest of the day would have been
+  scored on two different scales.
+- **Recovery colours** — red / yellow / green bands (<34, 34–67, ≥67) are
+  adopted for the Recovery score only, at the athlete's request. §10's
+  rule that red/green is never used for *in band / out of band* on a
+  chart still stands: charts keep solid/hollow markers.
+- **§8.1 Today and the score detail pages** are rewritten for the new
+  layout; §10 is rewritten for the new visual system. §9's per-range
+  mean/delta (deferred since v1.18) ships for the three score charts.
+- **Score ranges lock** until scored history covers them end to end
+  (§9): with FR70 data from 8 Aug, on 28 Oct the `90d` range unlocks on
+  5 Nov; `6m`/`1y` later. `all` is always open.
+
 ---
 
 ## 1. What this is
@@ -2443,7 +2497,7 @@ input to our own metrics.
 | 4 | **No GPS coordinates ever leave the compute layer** | Public site + home-start runs = published absence schedule. No panel needs location. |
 | 5 | **No surname anywhere on the site** | Health data, permanent, indexed, two years from a job market. |
 | 6 | Charts = **ECharts**, interactive on all breakpoints | Native `dataZoom` for the range selector; tap-to-inspect is first-class. One codebase, no static mobile fork. |
-| 7 | **No composite score** of any kind | §3. |
+| 7 | **Exactly three composite scores — Recovery, Strain, Sleep (§7) — and no others** (v1.35) | The athlete's decision, 28 Oct 2026. Each opens onto its contributors (§3.1, §8.1). A fourth composite needs its own amendment. |
 | 8 | Language = **English** | Matches coach files. |
 | 9 | Strava = **one-time bulk archive import only**, then dropped | Seeds the full Strava export history (13 May 2023 → 7 Aug 2026, corrected in v1.5 from an earlier "Dec 2025" estimate made before the real export was inspected). Account data export, not the API — no subscription, no ToS question. |
 | 10 | Garmin ingest = `python-garminconnect` | Unofficial but mature. ToS-grey; accepted knowingly. |
@@ -2463,8 +2517,14 @@ interventions made performance worse**, with effectiveness falling as attention
 moved toward the self and away from the task. Feedback aimed at the task
 produced positive effects; personal feedback produced consistently negative ones.
 
-A tile reading `READINESS 55 ▼-2` is self-level feedback with nothing to act on.
-It is banned. Every panel must answer *what do I change* — not *how am I doing*.
+A tile reading `READINESS 55 ▼-2` on its own is self-level feedback with
+nothing to act on. Every panel must answer *what do I change* — not *how am I
+doing*. **v1.35:** the athlete has chosen to show three composite scores
+(Recovery, Strain, Sleep — §7) knowing this evidence. The rule that follows
+from it: a score is never a dead end. Each one opens a detail page showing the
+measured inputs that produced it, their weight in the score, and how each sits
+against its band (§8.1), so the task-level information is always one tap away.
+No other panel may introduce a composite.
 
 **3.2 — Every metric renders against its reference band.**
 Control theory: monitoring only drives behaviour when there is a standard to
@@ -2660,6 +2720,7 @@ binding on the ingest layer, not an implementation detail to re-derive:
 | `body_battery_min`, `body_battery_max` | `get_stats(date).bodyBatteryLowestValue` / `.bodyBatteryHighestValue` | single clean source, no ambiguity |
 | `steps` | `get_stats(date).totalSteps` | |
 | `stress_avg` | `get_stats(date).averageStressLevel` | |
+| `sleep_start_local`, `sleep_end_local` | `get_sleep_data(date).dailySleepDTO.{sleepStartTimestampLocal,sleepEndTimestampLocal}` | **Added v1.35, migration 009.** Garmin's `*Local` epoch-ms is already shifted to local time; read as UTC it gives the wall-clock reading, stored as `timestamp` (no zone). Feeds `sleep_score`'s consistency term only. NULL when Garmin scored no window. |
 | `device` | **not an API field on any of the above.** Hardcoded `'fr70'` in the Garmin ingest path. No ingest path writes `'amazfit'`; the `biometrics` series therefore begins 8 Aug 2026, with no pre-FR70 rows. |
 
 **Correction (v1.3):** v1.2's mapping table said the `'amazfit'`
@@ -2858,6 +2919,28 @@ VO2max (`vO2MaxValue`), and `activityTrainingLoad` are model outputs, same
 class as Training Readiness/Status excluded by §1. Not stored; retained in
 the raw archive. See §7 for wrist running power, excluded the same way.
 
+### `activities.start_ts`, `hr_daily`, `activity_hr` — strain inputs (v1.35, migration 009)
+
+`activities.start_ts` (`timestamptz`, nullable) ← `get_activity(id).summaryDTO.startTimeGMT`.
+A time, never a place (rule 1). Strava rows leave it NULL; strain starts at
+the device break regardless.
+
+**`hr_daily`** — one row per day: `date` PK · `samples` jsonb · `device` ·
+`updated_at`. `samples` = `get_heart_rates(date).heartRateValues` as
+`[[epoch_ms_utc, bpm], …]` with null readings dropped (~720 pairs at
+Garmin's 2-minute cadence). A day with no reading writes no row (§6
+non-wear rule, same reasoning).
+
+**`activity_hr`** — one row per activity: `activity_id` PK, FK →
+`activities.id` `on delete cascade` · `samples` jsonb · `updated_at`.
+`samples` = `get_activity_details(id, maxchart=20000, maxpoly=0)`
+`directTimestamp` + `directHeartRate` pairs, nulls dropped, ~1 s cadence.
+`maxpoly=0` means Garmin returns no polyline at all. No other metric from
+that response is stored.
+
+Both tables: RLS owner policy, grants to `authenticated` and
+`service_role`, explicit `revoke all … from anon` (rules 10, 11).
+
 ### `sessions` — the plan (schema migrated 12 Aug 2026, migration 006, v1.19)
 Airtable shape retained, minus `shin`: `id` (uuid PK) · `date` (unique) ·
 `week` · `phase` · `session_type` · `purpose` · `prescription` · `done` ·
@@ -2960,6 +3043,15 @@ sources under two different ids (Strava's and Garmin's own
 the ids never collide. Only the date boundary prevents that day being
 written twice under two rows.
 
+**Score inputs (v1.35).** For each day in the window, after `biometrics`,
+`sync.py` calls `get_heart_rates(date)` and upserts `hr_daily` on `date`.
+For each activity, after its `activities` row is upserted (the FK needs
+it), it calls `get_activity_details(id, maxchart=20000, maxpoly=0)` and
+upserts `activity_hr` on `activity_id`. Nothing is derived at ingest. The
+first backfill of these inputs runs `sync.py --from 2026-08-08 --to
+<yesterday>` once, after migration 009 — about three Garmin calls per day
+more than before, paced by the existing per-day loop.
+
 ---
 
 ## 7. Metric definitions
@@ -2982,6 +3074,10 @@ These are binding. The frontend must not recompute or reinterpret them.
 | `last_night` | **Added v1.26, §8.1 Panel 1.** Sleep/RHR/HRV for the most recent `biometrics` row, plus a value list scoped to the *current device only* (reuses `rhr_baseline`/`hrv_baseline`'s own `_rows_on_current_device` filter — CLAUDE.md rule 5) and a computed `band_possible_from` date (`first_date_on_current_device + (HRV_BASELINE_MIN_DAYS − 1)` days). **Deliberately computes no band** — see the v1.26 amendment for the full reasoning. A null sensor reading stays null (rule 12). **`days_behind` added v1.30** (`as_of - <latest row's date>`) — lets the render layer state which night is shown and flag when the gap exceeds the clamp's normal one-day lag, see the v1.30 amendment. |
 | `session_for_date` | **Added v1.26, §8.1 Panel 2.** The single `sessions` row for a given date (`sessions.date` is unique, §5), narrowed to `session_type`/`purpose`/`prescription`/`done`. No row is `None`, a real state, not an error. |
 | `today_flag` | **Added v1.26, §8.1 Panel 3.** At most one of `{shin, illness, volume_ramp}`, evaluated in that order, first hit wins, `None` if nothing qualifies. Rule 1: `daily.shin > 0` today or yesterday (today first), **NULL is never a hit**. Rule 2: `daily.illness is True` today or yesterday (today first). Rule 3: completed rolling 7-day km (window ending **yesterday**, never today — "never project the current week forward") more than `TODAY_FLAG_VOLUME_RAMP_PCT` (10%, strict `>`) above the preceding completed 7-day window, via `rolling_7d_km`/`ramp_pct`. **Distinct from `ramp_pct`'s own row above**: that compares calendar Mon–Sun weeks (`weekly_km`, §8.2); this compares two trailing 7-day windows (`rolling_7d_km`) — same 10% tolerance, different question, not shared code. **Added v1.27 — rule 3 is suppressed entirely, falling through as a non-match, if either 7-day window contains any date before `UNDERSTATED_VOLUME_CUTOFF` (§7's own v1.7 floor-not-measurement note, same constant `shin_series` already reads).** No caveat, no warning render — see the v1.27 amendment for why a caveated number was rejected. Suppression lifts 2026-08-22, once both windows clear the cutoff. |
+| `recovery` | **Added v1.35.** 0–100, from NOOP's Charge. For night `d`, each input is a z-score against the **prior 30 days on the current device** (`d` itself excluded; rule 5): HRV as `(ln hrv − mean ln hrv) / σ`, RHR and respiration as `(mean − x) / σ` (lower is better), prior-day `strain` as `(mean − x) / σ`, and `sleep_score / 100` as `(x − 0.85) / 0.12` (no baseline). σ = 1.253 × max(mean absolute deviation, floor); floors ln-HRV 0.08, RHR 2 bpm, respiration 0.5, strain 1.05. Weights HRV 0.55, RHR 0.20, sleep 0.15, respiration 0.05, prior-day strain 0.05; an absent input drops out and the rest renormalize. Composite z → `100 / (1 + e^(−1.6 (z + 0.2)))`, so z = 0 reads ≈ 58%. **HRV is required:** fewer than 4 prior HRV nights returns insufficient-data (rendered as *calibrating n/4*); ≥ 14 is `trusted`. Bands: < 34 red, 34–67 yellow, ≥ 67 green. Output carries the per-input z and the weight actually applied after renormalization, for the contributors panel. |
+| `strain` | **Added v1.35.** 0–21, from NOOP's Effort (Edwards-style TRIMP on %HRR, Karvonen). `%HRR = (hr − rhr_d) / (201 − rhr_d)`, `rhr_d` that day's `biometrics.rhr`. Zone weight 0–5 at 50/60/70/80/90 %HRR (a cut-off is inclusive). TRIMP = Σ weight × minutes to the next sample, gap capped at 10 s inside an activity stream and 120 s on the all-day series (a longer gap is non-wear, not load). Each activity with an `activity_hr` stream is scored on that stream over `[start_ts, start_ts + duration_s)`; every all-day sample outside those windows is scored on the 2-minute series, so no minute counts twice. An activity without a stream falls back on the all-day series. `strain = 21 × ln(TRIMP + 1) / ln(7201)`. Output also carries `activity_share` = activity-stream TRIMP / day TRIMP (`None` on a zero-load day). **All activity types count, cycling included** — this is cardiovascular load; rule 6 binds `weekly_km` only. No `hr_daily` row, or a null `rhr`, is insufficient-data, never 0. |
+| `sleep_score` | **Added v1.35.** 0–100, from NOOP's Rest. Weighted mean of: **duration** `min(1, asleep / need)` 0.50; **efficiency** `asleep / (asleep + awake)` 0.20; **restorative** `min(1, ((deep + rem) / asleep) / 0.50) × f`, `f = 0.5 + 0.5 × min(1, (deep / asleep) / 0.13)` 0.20; **consistency** 0.10 = `1 − SD / 90 min` clamped to [0, 1], SD the mean of the population SDs of bed and wake clock times (minutes after noon, so midnight doesn't wrap) over the 7 nights ending `d`, needing ≥ 3 nights with a recorded window. An absent part drops and the weights renormalize. **Need** = 75th percentile of the prior 30 nights' sleep, floored at 8 h (adult target) and capped at 9.5 h; fewer than 7 nights → 8 h. No sleep for the night is insufficient-data. |
+| `score_series`, `range_stats` | **Added v1.35.** `score_series` computes `strain` for every date first, then `sleep_score` and `recovery` per date (recovery reads the prior day's strain). `range_stats` returns mean/min/max/n over a range and `delta` = that mean minus the mean of the equal-length window immediately before it (`None` if that window is empty) — §9's per-range mean and delta, computed here, never in the frontend. |
 
 **Added v1.7 — floor, not measurement, for any range ending before
 2026-08-08.** `weekly_km`, `ramp_pct`, `rolling_7d_km`, and
@@ -3012,7 +3108,8 @@ insufficient-data signal.
 
 **Explicitly not computed:** ACWR / load ratio (mathematical coupling between
 numerator and denominator produces correlations that aren't there; also needs
-months of history we don't have). Any readiness or recovery composite.
+months of history we don't have). Any composite beyond the three v1.35
+scores below.
 Wrist-based running power is **retained in the raw archive only — not
 stored in `activities`** (§5 has no power column, and none is added). It is
 a model output, not a measurement, same class as Training Effect and VO2max.
@@ -3025,13 +3122,41 @@ hide the single `2` that matters.
 ## 8. Pages and panels
 
 ### 8.1 Today — default landing on mobile
-Read-only, fully automatic. Ten seconds, once, in the morning.
+Read-only, fully automatic. Ten seconds, once, in the morning. **Rewritten
+v1.35** — layout from the Figma frame *Today v2 — liquid*; the v1.26–v1.32
+"Most recent night" panel is replaced by the score card and the metric
+cards below (its history stays in those amendments).
 
-| Panel | Answers | Encoding |
+| Block | Answers | Encoding |
 |---|---|---|
-| Most recent night (titled "Last night" v1.26–v1.29, renamed v1.30 — see the v1.30 amendment) | Sleep, RHR, HRV | **Built v1.26 without a band — deferred, see the v1.26 amendment.** Three raw values, a current-device-era-only value list, and one note stating no band exists yet, that Amazfit baselines don't transfer, and the computed date a band becomes possible. Gains the originally-specified "vs *his* band" once `rhr_baseline`/`hrv_baseline` (§7) have enough FR70 nights. **v1.30:** the reading's date is always shown next to the values, and a plain staleness line appears when `days_behind` exceeds the clamp's normal one-day lag — the panel never implies the reading is more current than it is. **v1.31:** the three sparklines (v1.29) render undistorted and unclipped at any viewport width, are taller for at-a-glance legibility, and support hover — nearest-point date and value in a tooltip matching the Block panel's register — see the v1.31 amendment for the four defects fixed and why an area fill stayed rejected. **v1.32:** the three sparklines share one fixed-width column template with the label/value row above them, so all three plot at the same horizontal scale and every column aligns across the three metrics — see the v1.32 amendment for the defect this fixes. Also v1.32: sits beside "Today's session" in a two-column grid on desktop (`.today-grid`, >=768px), unchanged single-column stack on phone. |
-| Today's session | What to do | Pulled from `sessions` for the exact date: `session_type`, `purpose`, `prescription`, `done`. No row for today renders as plain text saying so. |
-| Flag | Anything needing a decision | **At most one**, evaluated shin → illness → volume ramp, first hit wins (§7 `today_flag`, v1.26 amendment). If nothing qualifies, the slot is absent, not empty. **The volume-ramp rule is suppressed (not caveated) while either comparison window touches pre-8-Aug-2026 data — v1.27 amendment.** |
+| Header | Which day | "Today", the date, a mini Recovery sphere, and a `+` linking to `/log`. |
+| Score card | How recovered, how loaded, how slept | Three liquid spheres (§10): **Recovery** (fill = score / 100, colour = band), **Strain** (fill = strain / 21), **Sleep** (fill = score / 100). Each shows its number and opens its detail page. Each is the **latest date that has a value** and states that date when it isn't the most recent synced day — the v1.30 rule that a reading never looks more current than it is. Recovery with insufficient HRV history renders an empty sphere labelled *Calibrating n/4*. |
+| Flag | Anything needing a decision | Unchanged from v1.26/v1.27: at most one of shin → illness → volume ramp, absent when nothing qualifies. Renders as an amber card above the session. |
+| Today's session | What to do | Unchanged data (`session_for_date`): `session_type`, `purpose`, `prescription`. No row renders as plain text saying so. |
+| Your cards | The measured inputs | One row each: **HRV** (last night; once `hrv_baseline` exists, its 7-day vs 30-day mean — §7 defines no HRV band), **Resting HR** (band from `rhr_baseline`), **Sleep** (asleep vs need), **Weekly km** (`weekly_km`, running only, Monday to date), **Shin** (latest answer and its date — never a mean, §7). All pre-computed in `today.json`'s `cards` block. Each row's sphere icon is decorative: a fixed fill in the metric's colour, carrying no value. A card with no data reads "—", never 0. |
+| Tab bar | Navigation | Floating, bottom: Today · Week · Block · Lab (Lab disabled until Phase 5). State, not routes (v1.25). |
+
+**Score detail pages (v1.35)** — opened from a sphere; a back button
+returns to Today. State, not routes.
+
+- **Recovery:** hero sphere with score, band chip and date; *provisional*
+  note while the HRV baseline has < 14 nights. **Contributors:** each
+  present input (`recovery.inputs`) with tonight's value, its 30-day
+  baseline, and a bar whose length is the weight actually applied
+  (`recovery.weights`); a line states that skin temperature and overnight
+  HR slope are not measured by the FR70. **Trend** with the range
+  selector (§9) and MEAN / MIN / MAX / delta. **Calendar:** the last 13
+  weeks as a Mon–Sun grid coloured by band; a day with no score is an
+  empty cell, never a colour.
+- **Strain:** range selector, trend on a fixed 0–21 axis, MEAN / MIN / MAX
+  / delta; **this week** as Mon–Sun bars (no plan target — `sessions`
+  carries none); **latest day** split into activity load vs rest-of-day
+  load (`strain.activity_share`, computed in §7), listing that day's activities.
+- **Sleep:** hero sphere with asleep, need and the bed → wake window;
+  the four parts (duration, efficiency, restorative, consistency) as tiles
+  with value and weight, an absent part labelled as such; stage
+  durations (deep / REM / light / awake) as bars; range selector and trend.
+  No hypnogram — per-epoch stages are not ingested.
 
 The only thing Luca touches is the `/log` link.
 
@@ -3258,9 +3383,13 @@ tap gets filled for two weeks and then never again.
   once at the widest range, filtered client-side, per-range coverage
   precomputed in `build_data.py`). Each range should display the **mean for
   that window and the delta vs the previous equivalent window** — this is
-  the genuinely useful part of the reference design, but it is **not yet
-  built** (v1.18 deferred it explicitly; §13). Applies to `rolling_7d_km`
-  only — §7 forbids any mean of `shin`.
+  the genuinely useful part of the reference design. **Built v1.35 for the
+  three score charts** (`range_stats`, §7); still not built for
+  `rolling_7d_km`. Never for `shin` — §7 forbids any mean of it. **Score
+  ranges lock (v1.35):** a range whose nominal start precedes the first
+  scored day (8 Aug 2026) is shown disabled with its unlock date, because
+  a `1y` view of twelve weeks would read as a year of data; `all` is
+  always enabled.
 - **Charts stay clean.** No inline annotations, ever. **A hover tooltip is
   not an inline annotation** (v1.18) — this rule bans annotations baked
   into the chart itself, not on-demand inspection triggered by the athlete.
@@ -3279,54 +3408,58 @@ tap gets filled for two weeks and then never again.
 
 ## 10. Visual system
 
-Dark and dense, per brief. Blue-black rather than neutral black — the palette is
-anchored in Italian athletics *azzurro* rather than the default acid-on-black.
+**Rewritten v1.35** — WHOOP/NOOP-style, from the Figma file *Training
+dashboard — mockup v2*. Dark, rounded, card-based; each page opens under a
+soft sky gradient that fades into the background.
 
 ```css
---ink:      #0B0E13;  /* background */
---surface:  #141922;  /* panels */
---line:     #232B38;  /* hairlines, grid */
---text:     #E6EAF0;
---muted:    #8794A6;
---azzurro:  #3E8FD6;  /* primary data */
---amber:    #D4A017;  /* attention — used sparingly, never as a verdict */
+--bg:       #0E1013;  /* page background */
+--card:     #1A1D22;  /* cards, radius 26px */
+--line:     #2A2F37;  /* card hairline */
+--text:     #F2F4F7;
+--muted:    #9AA3AE;
+--accent:   #5AA2F0;  /* links, active tab, selected range */
+--green:    #22C98A;  /* recovery ≥ 67 */
+--yellow:   #E8C14B;  /* recovery 34–67 */
+--red:      #E0523F;  /* recovery < 34 */
+--strain:   #3F82D8;
+--sleep:    #9FB0C2;
+--rhr:      #E07A4F;
+--amber:    #D4A017;  /* flag, shin — attention, never a verdict */
 ```
 
-**Type:** IBM Plex Sans for UI, IBM Plex Mono for all figures. Plex Mono has
-true tabular figures, so columns of times and paces align — non-negotiable on a
-dashboard that is mostly numbers — and the engineering lineage suits the athlete.
+**Type:** the system UI stack (`-apple-system`, SF Pro on the athlete's
+iPhone; Inter/Segoe/Roboto elsewhere), tabular figures for every number.
+Section labels are small caps-style uppercase with wide tracking.
 
-**Signature element — the lane.** Reference bands (§3.2) render as a *track lane*:
-a filled channel with hairline edges, echoing lane markings. It is the one
-decorative idea in the system, and it earns its place because it is also the most
-functionally important element on every chart.
+**Signature element — the liquid sphere.** A dark sphere filled from the
+bottom to the score's level with a gently waved surface, a few bubbles and
+a soft highlight. Used for the three scores; small decorative versions mark
+the metric cards (§8.1). Static — `prefers-reduced-motion` needs nothing.
+
+**Score trend charts** (Recovery / Strain / Sleep detail pages) draw a
+filled dot on every day's value over the line and a soft area fill below it.
+
+**Reference bands still render as a lane** on continuous trend charts
+(HRV, RHR): a shaded channel with hairline edges behind the line.
 
 **Band vs point encoding — both, never on the same chart:**
-- **Continuous trends** (RHR, HRV, aerobic efficiency) → shaded lane behind the line.
-- **Discrete sessions** (each medio, each easy run) → **solid marker = in band,
-  hollow marker = out of band.**
+- **Continuous trends** → shaded lane behind the line.
+- **Discrete sessions** → **solid marker = in band, hollow marker = out of band.**
 
 **A third marker state exists, for `shin` only: absent.** Solid = in band,
 hollow = out of band, **absent = not answered** — hairline outline, no fill,
 sitting on the axis. The primary periostitis panel (§8.3) must be readable as
 three distinct states without colour. A day with no answer must never look like
-a day with no pain.
+a day with no pain. `shin = 0` is the only in-band value (v1.13): a 0–1 split
+would render the first whisper of shin pain as a solid in-band marker on the
+early-warning chart. The band drives marker fill only; the raw 0–3 ordinal
+still drives the step height (§7).
 
-**Added v1.13 — "in band" for shin, binding.** Unlike RHR/HRV/pace, `shin`
-has no naturally continuous band — it's a 0–3 ordinal. `shin = 0` is the
-only in-band (solid marker) value; 1–3 is out of band (hollow). A 0–1
-split was considered and rejected: `full_plan.md`'s autoregulation table
-treats any shin whisper as an amber trigger, and the athlete's standing
-protocol acts on any reading above 0, so a 0–1 split would render a shin
-of 1 as a solid in-band marker on the primary periostitis early-warning
-chart — hiding the first signal the chart exists to surface. The
-conservative direction on an early-warning chart is to flag sooner, not
-later. This does not replace the raw 0–3 ordinal, which still drives the
-step series' height (§7) — the band only drives marker fill state.
-
-**Red/green is not used for in/out.** Red is a judgement about the athlete;
-"outside the band" is information about a session. Fill-vs-hollow carries the
-same information, survives colour-blindness, and doesn't editorialise.
+**Colour as judgement — exactly one exception (v1.35).** The Recovery score
+uses red / yellow / green bands, at the athlete's request. Everywhere else
+red/green is not used for in/out of band: "outside the band" is information
+about a session, and fill-vs-hollow carries it without colour.
 
 ---
 
@@ -3371,6 +3504,7 @@ same information, survives colour-blindness, and doesn't editorialise.
 | **1** | Watch arrived (8 Aug) | Repo scaffold, Actions pipeline, `garmin_client.py` against the real API, `biometrics`/`activities` migration + RLS + grants, `metrics.py`, backfill, device-break marker, Week + Block off `sessions` data, Today goes live |
 | **1.5** *(added v1.6)* | Not yet scheduled — blocks 4 metrics below | New `laps` table + ingest path. Added v1.6, discovered writing `compute/metrics.py`: `easy_band_compliance`, `medio_control`, `aerobic_efficiency`, and `decoupling` (§7) each need per-run split/segment data (warm-up-excluded steady segment, first-half/second-half, "the medio segment") that no table stores today. Garmin's `get_activity(id).splitSummaries` already carries per-lap distance/duration/pace/HR and contains no coordinate-shaped keys (confirmed against the real fixture, `ingest/fixtures/garmin_activity_summary_23902996105.json`) — a `laps` table sourced from it is the actual fix, not a metric-definition change. Until this phase ships, those four metrics are implemented as correct pure functions with no real data to run on (§7). |
 | **2** | 17 Aug — Meso 1 boundary | Port `sessions`/`weekly`/`benchmarks` from Airtable. `easy_band_compliance`/`medio_control` additionally need Phase 1.5 before they render against real data — classifying a run as easy/medio is a `sessions` concern, but the segment data itself comes from `laps`. |
+| **2.5** *(added v1.35)* | 28 Oct 2026 | Recovery / Strain / Sleep scores (§7), migration 009 + ingest of `hr_daily` / `activity_hr` / sleep window, backfill from 8 Aug, `scores.json`, §8.1 Today and score detail pages rebuilt in the §10 v1.35 visual system. |
 | **3** | +21 days on FR70 | HRV/RHR baselines established, bands become real, autoregulation panel on |
 | **4** | Oct, post-benchmark | Campaign page — trajectory vs floor/target/stretch |
 | **5** | 2027 | Lab unlocks, panel by panel, as each `min_n` is crossed |

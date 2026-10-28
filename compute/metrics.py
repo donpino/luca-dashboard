@@ -25,10 +25,11 @@ not silently produce a number from insufficient data").
 
 from __future__ import annotations
 
+import math
 import re
 from dataclasses import dataclass
-from datetime import date, timedelta
-from statistics import mean, median
+from datetime import date, datetime, timedelta
+from statistics import mean, median, pstdev
 from typing import Any
 
 # ---------------------------------------------------------------------------
@@ -86,6 +87,20 @@ def _to_date(value: date | str) -> date:
     if isinstance(value, date):
         return value
     return date.fromisoformat(value)
+
+
+def _to_datetime(value: datetime | str) -> datetime:
+    if isinstance(value, datetime):
+        return value
+    return datetime.fromisoformat(value)
+
+
+def _to_epoch_ms(value: datetime | str | int) -> int:
+    """activities.start_ts arrives as a timestamptz string from Supabase;
+    HR samples are epoch ms. Normalise to the latter."""
+    if isinstance(value, int):
+        return value
+    return round(_to_datetime(value).timestamp() * 1000)
 
 
 def _running_km(row: dict) -> float | None:
@@ -742,6 +757,324 @@ def week_checkin(
         },
         "understated_volume": understated_volume,
         "understated_volume_cutoff": UNDERSTATED_VOLUME_CUTOFF,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Scores: recovery, strain, sleep_score — DASHBOARD_SPEC.md §7, v1.35.
+#
+# Adapted from NOOP's Charge / Effort / Rest (github.com/ryanbr/noop,
+# PolyForm Noncommercial 1.0.0, Copyright 2026 NoopApp) — the weights,
+# constants and logistic anchor are NOOP's published values; the code is
+# an independent Python implementation, not a port of theirs. Where this
+# differs from NOOP (windowed baseline instead of EWMA, ln-HRV, inputs the
+# FR70 doesn't measure dropped), §7 says so.
+# ---------------------------------------------------------------------------
+
+HR_MAX = 201  # §7 v1.35 — highest max_hr seen repeatedly (Amazfit, 199–201 across sessions)
+
+BASELINE_WINDOW_DAYS = 30
+BASELINE_MIN_N = 4  # usable ("provisional") — NOOP minNightsSeed
+BASELINE_TRUSTED_N = 14  # NOOP minNightsTrust
+MAD_TO_SIGMA = 1.253  # mean absolute deviation -> sigma, normal approximation
+# Spread floors keep a quiet run of nights from shrinking sigma toward zero
+# and making every small wobble a large z (NOOP floorSpread, same units).
+SPREAD_FLOOR = {"ln_hrv": 0.08, "rhr": 2.0, "respiration": 0.5, "strain": 1.05}
+
+RECOVERY_WEIGHTS = {"hrv": 0.55, "rhr": 0.20, "sleep": 0.15, "respiration": 0.05, "prior_strain": 0.05}
+RECOVERY_LOGISTIC_K = 1.6
+RECOVERY_LOGISTIC_Z0 = -0.20  # z = 0 -> ~58%, WHOOP's published population average
+SLEEP_PERF_CENTER = 0.85
+SLEEP_PERF_SCALE = 0.12
+RECOVERY_RED_MAX = 34.0
+RECOVERY_YELLOW_MAX = 67.0
+
+STRAIN_MAX = 21.0
+STRAIN_DENOMINATOR = 7201.0  # Edwards ceiling: zone 5 held 24 h = 7200, +1
+STRAIN_ZONE_CUTS = (0.5, 0.6, 0.7, 0.8, 0.9)  # %HRR lower bounds of zones 1..5
+ALL_DAY_SAMPLE_CAP_S = 120  # Garmin all-day HR cadence; longer gaps are non-wear, not load
+ACTIVITY_SAMPLE_CAP_S = 10  # per-second stream; a longer gap is a dropout
+
+SLEEP_WEIGHTS = {"duration": 0.50, "efficiency": 0.20, "restorative": 0.20, "consistency": 0.10}
+SLEEP_NEED_FLOOR_H = 8.0  # adult population target (NSF/AASM midpoint)
+SLEEP_NEED_CAP_H = 9.5
+SLEEP_NEED_MIN_NIGHTS = 7
+RESTORATIVE_TARGET = 0.50  # deep+REM share of asleep time for full marks
+DEEP_SHARE_TARGET = 0.13
+DEEP_FLOOR_FACTOR = 0.5
+CONSISTENCY_WINDOW_NIGHTS = 7
+CONSISTENCY_MIN_NIGHTS = 3
+CONSISTENCY_ZERO_AT_MIN = 90.0  # SD of bed/wake clock time at which consistency reaches 0
+
+
+def _clamp01(x: float) -> float:
+    return max(0.0, min(1.0, x))
+
+
+def _weighted_mean(terms: dict[str, float], weights: dict[str, float]) -> float:
+    """Missing terms are simply absent from `terms`; the remaining weights
+    renormalize (NOOP's rule), so a term the FR70 can't measure neither
+    helps nor hurts."""
+    total = sum(weights[k] for k in terms)
+    return sum(terms[k] * weights[k] for k in terms) / total
+
+
+def personal_baseline(values: list[float], floor: float) -> dict | InsufficientData:
+    """Mean and robust sigma of a trailing window. The caller has already
+    restricted `values` to the current device (rule 5) and excluded the day
+    being scored, so a night never judges itself."""
+    n = len(values)
+    if n < BASELINE_MIN_N:
+        return InsufficientData(reason=f"baseline needs {BASELINE_MIN_N} values", n=n, required=BASELINE_MIN_N)
+    centre = mean(values)
+    spread = max(mean(abs(v - centre) for v in values), floor)
+    return {"mean": centre, "sigma": MAD_TO_SIGMA * spread, "n": n, "trusted": n >= BASELINE_TRUSTED_N}
+
+
+def _prior_window(rows_by_date: dict[date, Any], d: date, days: int = BASELINE_WINDOW_DAYS) -> list:
+    return [rows_by_date[d - timedelta(days=i)] for i in range(1, days + 1) if d - timedelta(days=i) in rows_by_date]
+
+
+def _device_rows_by_date(biometrics: list[dict], d: date) -> dict[date, dict]:
+    resolved = _rows_on_current_device(biometrics, d)
+    if resolved is None:
+        return {}
+    return {_to_date(r["date"]): r for r in resolved[1]}
+
+
+# --- strain ---------------------------------------------------------------
+
+
+def _zone_weight(hr: float, rhr: float) -> int:
+    hrr = (hr - rhr) / (HR_MAX - rhr)
+    return sum(1 for cut in STRAIN_ZONE_CUTS if hrr >= cut)
+
+
+def _trimp_minutes(samples: list[tuple[int, float]], rhr: float, cap_s: int) -> float:
+    """Edwards-style TRIMP on %HRR: each sample contributes its zone weight
+    (0..5) × the seconds until the next sample, capped so a gap in the
+    stream is not counted as load."""
+    total = 0.0
+    for (ts, hr), (next_ts, _) in zip(samples, samples[1:]):
+        dt = min((next_ts - ts) / 1000, cap_s)
+        total += _zone_weight(hr, rhr) * dt / 60
+    return total
+
+
+def strain(
+    d: date,
+    hr_daily: dict | None,
+    activities: list[dict],
+    activity_streams: dict[int, list],
+    rhr: float | None,
+) -> dict | InsufficientData:
+    """Day strain on 0–21. Activity windows use their per-second stream;
+    the rest of the day uses Garmin's 2-minute all-day samples. Cycling and
+    gym count — this is cardiovascular load, not impact (rule 6 binds
+    weekly_km only)."""
+    if hr_daily is None or not hr_daily.get("samples"):
+        return InsufficientData(reason="no all-day HR for this date (non-wear)")
+    if rhr is None:
+        return InsufficientData(reason="no resting HR for this date — %HRR undefined")
+
+    windows, activity_trimp = [], 0.0
+    for a in activities:
+        stream = activity_streams.get(a["id"])
+        if not stream or a.get("start_ts") is None or a.get("duration_s") is None:
+            continue  # no stream: this activity's time falls back on the all-day samples
+        start_ms = _to_epoch_ms(a["start_ts"])
+        windows.append((start_ms, start_ms + a["duration_s"] * 1000))
+        activity_trimp += _trimp_minutes([tuple(s) for s in stream], rhr, ACTIVITY_SAMPLE_CAP_S)
+
+    all_day = [tuple(s) for s in hr_daily["samples"]]
+    # A sample is dropped if it starts inside an activity window, so the
+    # same minutes are never counted twice.
+    outside = [s for s in all_day if not any(lo <= s[0] < hi for lo, hi in windows)]
+    rest_trimp = _trimp_minutes(outside, rhr, ALL_DAY_SAMPLE_CAP_S)
+
+    trimp = activity_trimp + rest_trimp
+    value = STRAIN_MAX * math.log(trimp + 1) / math.log(STRAIN_DENOMINATOR)
+    return {
+        "date": d,
+        "strain": value,
+        "trimp": trimp,
+        "activity_trimp": activity_trimp,
+        "rest_of_day_trimp": rest_trimp,
+        # share of the day's load from activity streams; None on a 0-load
+        # day rather than a 0/0 the frontend would have to special-case
+        "activity_share": activity_trimp / trimp if trimp > 0 else None,
+    }
+
+
+# --- sleep_score ----------------------------------------------------------
+
+
+def _clock_minutes_from_noon(ts: datetime) -> float:
+    """Clock time as minutes after 12:00, so 23:30 and 00:30 sit 60 apart
+    instead of 1380 apart."""
+    return ((ts.hour * 60 + ts.minute) - 720) % 1440
+
+
+def sleep_need_hours(prior_rows: list[dict]) -> float:
+    hours = sorted(r["sleep_total_min"] / 60 for r in prior_rows if r.get("sleep_total_min"))
+    if len(hours) < SLEEP_NEED_MIN_NIGHTS:
+        return SLEEP_NEED_FLOOR_H
+    pos = 0.75 * (len(hours) - 1)
+    lo = int(pos)
+    hi = min(lo + 1, len(hours) - 1)
+    p75 = hours[lo] + (pos - lo) * (hours[hi] - hours[lo])
+    return min(max(p75, SLEEP_NEED_FLOOR_H), SLEEP_NEED_CAP_H)
+
+
+def sleep_consistency(window_rows: list[dict]) -> float | None:
+    """1 = same bed and wake clock time every night; 0 at a 90-minute
+    standard deviation. None below 3 nights with a recorded window."""
+    starts = [_clock_minutes_from_noon(_to_datetime(r["sleep_start_local"])) for r in window_rows if r.get("sleep_start_local")]
+    ends = [_clock_minutes_from_noon(_to_datetime(r["sleep_end_local"])) for r in window_rows if r.get("sleep_end_local")]
+    if min(len(starts), len(ends)) < CONSISTENCY_MIN_NIGHTS:
+        return None
+    sd = (pstdev(starts) + pstdev(ends)) / 2
+    return _clamp01(1 - sd / CONSISTENCY_ZERO_AT_MIN)
+
+
+def sleep_score(biometrics: list[dict], d: date) -> dict | InsufficientData:
+    by_date = _device_rows_by_date(biometrics, d)
+    row = by_date.get(d)
+    if row is None or not row.get("sleep_total_min"):
+        return InsufficientData(reason="no scored sleep for this night")
+    tst = row["sleep_total_min"]
+    need_h = sleep_need_hours(_prior_window(by_date, d))
+
+    parts: dict[str, float] = {"duration": _clamp01(tst / (need_h * 60))}
+    if row.get("sleep_awake_min") is not None:
+        parts["efficiency"] = _clamp01(tst / (tst + row["sleep_awake_min"]))
+    deep, rem = row.get("sleep_deep_min"), row.get("sleep_rem_min")
+    if deep is not None and rem is not None:
+        deep_factor = DEEP_FLOOR_FACTOR + (1 - DEEP_FLOOR_FACTOR) * _clamp01((deep / tst) / DEEP_SHARE_TARGET)
+        parts["restorative"] = _clamp01(((deep + rem) / tst) / RESTORATIVE_TARGET) * deep_factor
+    window = [by_date[d - timedelta(days=i)] for i in range(CONSISTENCY_WINDOW_NIGHTS) if d - timedelta(days=i) in by_date]
+    consistency = sleep_consistency(window)
+    if consistency is not None:
+        parts["consistency"] = consistency
+
+    return {"date": d, "score": 100 * _weighted_mean(parts, SLEEP_WEIGHTS), "parts": parts, "need_hours": need_h}
+
+
+# --- recovery -------------------------------------------------------------
+
+
+def recovery_band(score: float) -> str:
+    if score < RECOVERY_RED_MAX:
+        return "red"
+    if score < RECOVERY_YELLOW_MAX:
+        return "yellow"
+    return "green"
+
+
+def recovery(
+    biometrics: list[dict],
+    d: date,
+    sleep: dict | InsufficientData,
+    strain_by_date: dict[date, float],
+) -> dict | InsufficientData:
+    """z-score of each input against the prior 30 days on the same device,
+    weighted, then squashed through a logistic so z = 0 reads ~58%. HRV is
+    required: without its baseline there is no score, only 'calibrating'."""
+    by_date = _device_rows_by_date(biometrics, d)
+    row = by_date.get(d)
+    if row is None or row.get("hrv_overnight") is None:
+        return InsufficientData(reason="no overnight HRV for this night")
+    prior = _prior_window(by_date, d)
+
+    hrv_base = personal_baseline(
+        [math.log(r["hrv_overnight"]) for r in prior if r.get("hrv_overnight")], SPREAD_FLOOR["ln_hrv"]
+    )
+    if isinstance(hrv_base, InsufficientData):
+        return InsufficientData(reason="calibrating — HRV baseline", n=hrv_base.n, required=BASELINE_MIN_N)
+
+    z = {"hrv": (math.log(row["hrv_overnight"]) - hrv_base["mean"]) / hrv_base["sigma"]}
+    # value and baseline mean per input, in display units — what the
+    # contributors panel prints; the frontend derives nothing (rule 3).
+    inputs = {"hrv": {"value": row["hrv_overnight"], "baseline": math.exp(hrv_base["mean"])}}
+    for key, col in (("rhr", "rhr"), ("respiration", "respiration_overnight")):
+        base = personal_baseline([r[col] for r in prior if r.get(col) is not None], SPREAD_FLOOR[key])
+        if row.get(col) is not None and not isinstance(base, InsufficientData):
+            z[key] = (base["mean"] - row[col]) / base["sigma"]  # lower is better
+            inputs[key] = {"value": row[col], "baseline": base["mean"]}
+    if not isinstance(sleep, InsufficientData):
+        z["sleep"] = (sleep["score"] / 100 - SLEEP_PERF_CENTER) / SLEEP_PERF_SCALE
+        inputs["sleep"] = {"value": sleep["score"], "baseline": None}
+    prev = d - timedelta(days=1)
+    if prev in strain_by_date:
+        prior_strain = [strain_by_date[x] for x in (prev - timedelta(days=i) for i in range(1, BASELINE_WINDOW_DAYS + 1)) if x in strain_by_date]
+        base = personal_baseline(prior_strain, SPREAD_FLOOR["strain"])
+        if not isinstance(base, InsufficientData):
+            z["prior_strain"] = (base["mean"] - strain_by_date[prev]) / base["sigma"]
+            inputs["prior_strain"] = {"value": strain_by_date[prev], "baseline": base["mean"]}
+
+    composite = _weighted_mean(z, RECOVERY_WEIGHTS)
+    score = 100 / (1 + math.exp(-RECOVERY_LOGISTIC_K * (composite - RECOVERY_LOGISTIC_Z0)))
+    score = max(0.0, min(100.0, score))
+    # Weight actually applied to each present term, after renormalization —
+    # what the contributors panel shows, so it never displays a weight the
+    # score didn't use.
+    total = sum(RECOVERY_WEIGHTS[k] for k in z)
+    return {
+        "date": d,
+        "score": score,
+        "band": recovery_band(score),
+        "z": z,
+        "weights": {k: RECOVERY_WEIGHTS[k] / total for k in z},
+        "inputs": inputs,
+        "trusted": hrv_base["trusted"],
+    }
+
+
+def score_series(
+    biometrics: list[dict],
+    hr_daily: list[dict],
+    activities: list[dict],
+    activity_streams: dict[int, list],
+    start: date,
+    end: date,
+) -> list[dict]:
+    """One entry per date, oldest first: strain, sleep, recovery. Strain is
+    computed first for every date because recovery reads the prior day's."""
+    hr_by_date = {_to_date(r["date"]): r for r in hr_daily}
+    bio_by_date = {_to_date(r["date"]): r for r in biometrics}
+    acts_by_date: dict[date, list[dict]] = {}
+    for a in activities:
+        acts_by_date.setdefault(_to_date(a["date"]), []).append(a)
+
+    days = [start + timedelta(days=i) for i in range((end - start).days + 1)]
+    strains = {
+        d: strain(d, hr_by_date.get(d), acts_by_date.get(d, []), activity_streams, (bio_by_date.get(d) or {}).get("rhr"))
+        for d in days
+    }
+    strain_values = {d: s["strain"] for d, s in strains.items() if not isinstance(s, InsufficientData)}
+
+    out = []
+    for d in days:
+        sl = sleep_score(biometrics, d)
+        out.append({"date": d, "strain": strains[d], "sleep": sl, "recovery": recovery(biometrics, d, sl, strain_values)})
+    return out
+
+
+def range_stats(values: list[tuple[date, float]], start: date, end: date) -> dict | None:
+    """MEAN/MIN/MAX over [start, end] and `delta`: that mean minus the mean
+    of the equal-length window just before it (None when the earlier window
+    is empty). None when the range holds no value."""
+    inside = [v for d, v in values if start <= d <= end]
+    if not inside:
+        return None
+    length = (end - start).days + 1
+    before = [v for d, v in values if start - timedelta(days=length) <= d < start]
+    return {
+        "mean": mean(inside),
+        "min": min(inside),
+        "max": max(inside),
+        "n": len(inside),
+        "delta": mean(inside) - mean(before) if before else None,
     }
 
 

@@ -37,7 +37,7 @@ upsert-only rule above are (see DASHBOARD_SPEC.md v1.4).
 
 import argparse
 import os
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -167,6 +167,39 @@ def _minutes(seconds) -> int | None:
     return round(seconds / 60) if seconds is not None else None
 
 
+def _local_wallclock(epoch_ms) -> str | None:
+    """Garmin's *TimestampLocal fields are epoch ms already shifted to local
+    time — reading them as UTC gives the local wall-clock reading, which is
+    what biometrics.sleep_start_local/sleep_end_local store (migration 009)."""
+    if epoch_ms is None:
+        return None
+    return datetime.fromtimestamp(epoch_ms / 1000, tz=timezone.utc).replace(tzinfo=None).isoformat()
+
+
+def _gmt_iso(gmt_string: str | None) -> str | None:
+    """summaryDTO.startTimeGMT is a naive '2026-08-08T17:27:34.0' in UTC."""
+    if gmt_string is None:
+        return None
+    return datetime.fromisoformat(gmt_string).replace(tzinfo=timezone.utc).isoformat()
+
+
+def hr_pairs(timestamps_and_hr) -> list[list[int]]:
+    """[[epoch_ms, bpm], ...] with null readings dropped — a null is a
+    moment the watch measured nothing, never a zero (CLAUDE.md rule 12)."""
+    return [[int(ts), int(hr)] for ts, hr in timestamps_and_hr if ts is not None and hr is not None]
+
+
+def activity_hr_stream(details: dict) -> list[list[int]]:
+    """directTimestamp + directHeartRate from get_activity_details. Every
+    other metric in the response is ignored — and the call is made with
+    maxpoly=0, so there is no polyline to ignore (CLAUDE.md rule 1)."""
+    index = {m["key"]: m["metricsIndex"] for m in details.get("metricDescriptors") or []}
+    if "directTimestamp" not in index or "directHeartRate" not in index:
+        return []
+    ti, hi = index["directTimestamp"], index["directHeartRate"]
+    return hr_pairs((row["metrics"][ti], row["metrics"][hi]) for row in details.get("activityDetailMetrics") or [])
+
+
 def build_session_map(sessions_rows: list[dict]) -> dict[str, str]:
     """date -> sessions.id, one entry per date.
 
@@ -222,6 +255,8 @@ def sync_biometrics(client, db: Client, d: date) -> None:
         "hrv_overnight": hrv_overnight,
         "hrv_status": hrv_status,
         "respiration_overnight": daily_sleep.get("averageRespirationValue"),
+        "sleep_start_local": _local_wallclock(daily_sleep.get("sleepStartTimestampLocal")),
+        "sleep_end_local": _local_wallclock(daily_sleep.get("sleepEndTimestampLocal")),
         "body_battery_min": stats.get("bodyBatteryLowestValue"),
         "body_battery_max": stats.get("bodyBatteryHighestValue"),
         "steps": stats.get("totalSteps"),
@@ -234,6 +269,21 @@ def sync_biometrics(client, db: Client, d: date) -> None:
         f"(sleep={sleep_total_min is not None}, rhr={rhr is not None}, "
         f"hrv={hrv_overnight is not None}, hrv_status={hrv_status!r})."
     )
+
+
+def sync_hr_daily(client, db: Client, d: date) -> None:
+    """All-day HR at Garmin's 2-minute cadence, for strain (spec §7). A day
+    with no readings at all is non-wear and writes no row."""
+    ds = d.isoformat()
+    payload = client.get_heart_rates(ds) or {}
+    samples = hr_pairs(payload.get("heartRateValues") or [])
+    if not samples:
+        print(f"{ds}: no all-day HR — non-wear day, skipping hr_daily row.")
+        return
+    db.table("hr_daily").upsert(
+        {"date": ds, "samples": samples, "device": DEVICE}, on_conflict="date"
+    ).execute()
+    print(f"{ds}: hr_daily upserted ({len(samples)} samples).")
 
 
 def sync_activities(client, db: Client, d: date, session_map: dict[str, str]) -> int:
@@ -294,6 +344,7 @@ def sync_activities(client, db: Client, d: date, session_map: dict[str, str]) ->
             "avg_vertical_ratio": summary.get("verticalRatio"),
             "avg_ground_contact_ms": summary.get("groundContactTime"),
             "elevation_gain_m": summary.get("elevationGain"),
+            "start_ts": _gmt_iso(summary.get("startTimeGMT")),
             # Archiving to Storage is a later commit — see spec v1.4.
             "raw_archive_path": None,
         }
@@ -308,6 +359,14 @@ def sync_activities(client, db: Client, d: date, session_map: dict[str, str]) ->
             row["session_id"] = session_id
         db.table("activities").upsert(row, on_conflict="id").execute()
         count += 1
+        # After the activities row, never before: activity_hr's FK needs it.
+        # maxchart covers a 5.5 h session at 1 s; maxpoly=0 asks for no GPS.
+        details = client.get_activity_details(activity_id, maxchart=20000, maxpoly=0) or {}
+        stream = activity_hr_stream(details)
+        if stream:
+            db.table("activity_hr").upsert(
+                {"activity_id": activity_id, "samples": stream}, on_conflict="activity_id"
+            ).execute()
         print(
             f"{ds}: activity {activity_id} ({canonical_type}) upserted"
             + (f", linked to session {session_id}." if session_id else ".")
@@ -366,6 +425,7 @@ def main() -> None:
     total_activities = 0
     for d in days:
         sync_biometrics(client, db, d)
+        sync_hr_daily(client, db, d)
         total_activities += sync_activities(client, db, d, session_map)
 
     linked, still_null = repair_session_links(db, session_map)

@@ -16,6 +16,7 @@ class FakeTable:
 
     def upsert(self, row, on_conflict=None):
         self._pending = ("upsert", dict(row))
+        self._conflict_key = on_conflict or "id"
         return self
 
     def update(self, row):
@@ -51,7 +52,7 @@ class FakeTable:
             return SimpleNamespace(data=[dict(r) for r in matched])
 
         if op == "upsert":
-            key = payload["id"]
+            key = payload[self._conflict_key]
             if key in self.rows:
                 self.rows[key].update(payload)
             else:
@@ -112,3 +113,24 @@ class FakeGarminClient:
     def get_activity(self, activity_id: int) -> dict:
         type_key = self.type_keys_by_id.get(activity_id, self.type_key)
         return make_activity_detail(activity_id, type_key)
+
+    def get_activity_details(self, activity_id: int, maxchart=None, maxpoly=None) -> dict:
+        """Shaped like the real response: metric descriptors index into each
+        row's `metrics` list. Includes a null HR reading and an unrelated
+        metric, both of which the stream extractor must drop."""
+        self.last_details_maxpoly = maxpoly
+        return {
+            "metricDescriptors": [
+                {"key": "sumDistance", "metricsIndex": 0},
+                {"key": "directTimestamp", "metricsIndex": 1},
+                {"key": "directHeartRate", "metricsIndex": 2},
+            ],
+            "activityDetailMetrics": [
+                {"metrics": [0.0, 1000, 140.0]},
+                {"metrics": [3.1, 2000, None]},
+                {"metrics": [6.2, 3000, 142.0]},
+            ],
+        }
+
+    def get_heart_rates(self, ds: str) -> dict:
+        return {"heartRateValues": [[1000, 55], [121000, None], [241000, 58]]}

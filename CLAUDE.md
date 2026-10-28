@@ -29,10 +29,11 @@ implements what was decided.
    the web output directory. A unit test asserts no output JSON contains a key
    matching `/lat|lon|coord|polyline/`. The site is public and the runs start at
    the athlete's home.
-2. **No composite scores.** No readiness score, no recovery score, no sleep
-   score of our own, no single number summarising the athlete. This is not a
-   style preference — see spec §3.1. If a panel design seems to need one, the
-   panel design is wrong.
+2. **Exactly three composite scores: Recovery, Strain, Sleep** (spec §7,
+   v1.35 — the athlete's decision). No fourth: no readiness score, no
+   wellness or fitness-age number, nothing else summarising the athlete,
+   without its own spec amendment. Each score must open onto the measured
+   inputs that produced it (spec §3.1, §8.1) — a score is never a dead end.
 3. **Metric definitions live in `compute/metrics.py` only.** The frontend never
    aggregates, never derives, never recomputes. It reads pre-computed JSON and
    draws it. Every number on screen must be traceable to a tested function.

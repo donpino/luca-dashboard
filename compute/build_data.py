@@ -36,11 +36,16 @@ from dotenv import load_dotenv  # noqa: E402
 from metrics import (  # noqa: E402
     InsufficientData,
     assert_no_private_keys,
+    hrv_baseline,
     last_night,
+    range_stats,
+    rhr_baseline,
+    score_series,
     session_for_date,
     shin_series,
     today_flag,
     week_checkin,
+    weekly_km,
 )
 
 DATA_DIR = Path(__file__).resolve().parent.parent / "web" / "public" / "data"
@@ -166,7 +171,7 @@ def build_today(db, today: date) -> dict:
     (flag). One JSON file for the whole page: all three panels load
     together on the athlete's daily ten-second check, so one fetch beats
     three (DASHBOARD_SPEC.md v1.26 amendment)."""
-    biometrics = fetch_all(db, "biometrics", "date,device,sleep_total_min,rhr,hrv_overnight")
+    biometrics = fetch_all(db, "biometrics", "date,device,sleep_total_min,rhr,hrv_overnight,hrv_status")
     daily = fetch_all(db, "daily", "date,shin,illness")
     activities = fetch_all(db, "activities", "date,type,distance_km")
     session_rows = (
@@ -177,11 +182,25 @@ def build_today(db, today: date) -> dict:
         .data
     )
 
+    answered = sorted((r for r in daily if r.get("shin") is not None), key=lambda r: r["date"])
+    rhr_base = rhr_baseline(biometrics, today)
+    hrv_base = hrv_baseline(biometrics, today)
+    week_start = today - timedelta(days=today.weekday())
     return {
         "date": today,
         "last_night": _or_none(last_night(biometrics, today)),
         "session": session_for_date(session_rows, today),
         "flag": today_flag(activities, daily, today),
+        # §8.1 v1.35 "Your cards" — every number pre-computed here (rule 3)
+        "cards": {
+            "rhr_band": None if isinstance(rhr_base, InsufficientData) else rhr_base["band"],
+            "hrv_means": None
+            if isinstance(hrv_base, InsufficientData)
+            else {"mean_7d": hrv_base["mean_7d"], "mean_30d": hrv_base["mean_30d"]},
+            "weekly_km": weekly_km(activities, week_start),
+            "week_start": week_start,
+            "shin_latest": {"date": answered[-1]["date"], "shin": answered[-1]["shin"]} if answered else None,
+        },
     }
 
 
@@ -238,9 +257,98 @@ def build_week(db, today: date) -> dict:
     return week_checkin(activities, daily, biometrics, sessions, weekly, today)
 
 
+# Scores never reach back past the FR70 device break (CLAUDE.md rule 5):
+# every baseline they use resets there, and hr_daily starts there.
+SCORES_START = date(2026, 8, 8)
+
+
+def _score_ranges(series: list[dict], key: str, today: date) -> dict:
+    """Per §9 range: start date, stats, and whether it is locked. A range is
+    locked until the scored history covers it end to end — a 1y view of 82
+    days would read as a year of data (§8.1 v1.35)."""
+    values = [(e["date"], e[key]) for e in series if e[key] is not None]
+    out = {}
+    for rk in RANGE_OPTIONS:
+        nominal = _range_start(rk, today, date.min)
+        start = max(nominal, SCORES_START)
+        locked = rk != "all" and nominal < SCORES_START
+        out[rk] = {
+            "start": start,
+            "locked": locked,
+            "unlocks_on": (SCORES_START + (today - nominal)) if locked else None,
+            "stats": None if locked else range_stats(values, start, today),
+        }
+    return out
+
+
+def build_scores(db, today: date) -> dict:
+    """§8.1 v1.35 — the three score spheres, their detail pages, and the
+    Recovery calendar. One file: Today and every detail page read it."""
+    biometrics = fetch_all(
+        db,
+        "biometrics",
+        "date,device,sleep_total_min,sleep_deep_min,sleep_rem_min,sleep_light_min,"
+        "sleep_awake_min,rhr,hrv_overnight,respiration_overnight,sleep_start_local,sleep_end_local",
+    )
+    hr_daily = [r for r in fetch_all(db, "hr_daily", "date,samples") if r["date"] >= SCORES_START.isoformat()]
+    activities = [
+        a
+        for a in fetch_all(db, "activities", "id,date,type,duration_s,avg_hr,distance_km,start_ts")
+        if a["date"] >= SCORES_START.isoformat()
+    ]
+    streams = {r["activity_id"]: r["samples"] for r in fetch_all(db, "activity_hr", "activity_id,samples")}
+
+    raw = score_series(biometrics, hr_daily, activities, streams, SCORES_START, today)
+    series = [
+        {
+            "date": e["date"],
+            "recovery": None if isinstance(e["recovery"], InsufficientData) else e["recovery"]["score"],
+            "band": None if isinstance(e["recovery"], InsufficientData) else e["recovery"]["band"],
+            "strain": None if isinstance(e["strain"], InsufficientData) else e["strain"]["strain"],
+            "sleep": None if isinstance(e["sleep"], InsufficientData) else e["sleep"]["score"],
+        }
+        for e in raw
+    ]
+
+    def latest(key):
+        for e in reversed(raw):
+            if not isinstance(e[key], InsufficientData):
+                return e[key]
+        return None
+
+    rec = latest("recovery")
+    calibrating = None
+    if rec is None:
+        last = raw[-1]["recovery"]
+        calibrating = {"n": last.n or 0, "required": last.required}
+    bio_by_date = {r["date"]: r for r in biometrics}
+    sleep_latest = latest("sleep")
+    strain_latest = latest("strain")
+    acts_on_strain_day = (
+        [a for a in activities if a["date"] == strain_latest["date"].isoformat()] if strain_latest else []
+    )
+    return {
+        "as_of": today,
+        "recovery": rec,
+        "recovery_calibrating": calibrating,
+        "strain": strain_latest and {**strain_latest, "activities": acts_on_strain_day},
+        "sleep": sleep_latest and {**sleep_latest, "night": bio_by_date.get(sleep_latest["date"].isoformat())},
+        "series": series,
+        # Monday of the current week, for the Strain page's Mon–Sun bars
+        "week_start": today - timedelta(days=today.weekday()),
+        "ranges": {k: _score_ranges(series, k, today) for k in ("recovery", "strain", "sleep")},
+        "range_options": RANGE_OPTIONS,
+    }
+
+
 def main():
     db = get_db()
     today = date.today()
+
+    scores_payload = build_scores(db, today)
+    scores_out_path = DATA_DIR / "scores.json"
+    _write_json(scores_out_path, scores_payload)
+    print(f"wrote {scores_out_path} — recovery: {(scores_payload['recovery'] or {}).get('score')}")
 
     payload = build_shin_series(db, today)
     out_path = DATA_DIR / "shin_series.json"

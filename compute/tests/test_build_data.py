@@ -201,3 +201,58 @@ def test_write_json_raises_on_a_leaked_coordinate_key(tmp_path):
         _write_json(out_path, leaked_payload)
     # the gate must abort the write entirely, not write-then-raise
     assert not out_path.exists()
+
+
+# --- scores.json (spec §8.1 v1.35) -------------------------------------------
+
+
+class _FakeQuery:
+    def __init__(self, rows):
+        self.rows = rows
+
+    def select(self, _cols):
+        return self
+
+    def range(self, lo, hi):
+        self._slice = (lo, hi)
+        return self
+
+    def execute(self):
+        from types import SimpleNamespace
+
+        lo, hi = self._slice
+        return SimpleNamespace(data=self.rows[lo : hi + 1])
+
+
+class _FakeDB:
+    def __init__(self, tables):
+        self.tables = tables
+
+    def table(self, name):
+        return _FakeQuery(self.tables.get(name, []))
+
+
+def test_build_scores_locks_ranges_and_passes_the_coordinate_gate(tmp_path):
+    from datetime import timedelta
+
+    from build_data import SCORES_START, build_scores
+
+    today = date(2026, 10, 28)
+    bio = [
+        {"date": (SCORES_START + timedelta(days=i)).isoformat(), "device": "fr70", "hrv_overnight": 50, "rhr": 48,
+         "sleep_total_min": 450, "sleep_awake_min": 20, "sleep_deep_min": 70, "sleep_rem_min": 100}
+        for i in range((today - SCORES_START).days)
+    ]
+    payload = build_scores(_FakeDB({"biometrics": bio}), today)
+    # flat history -> every z = 0 except sleep -> a real score, not calibrating
+    assert payload["recovery"] is not None and payload["recovery_calibrating"] is None
+    assert payload["strain"] is None  # no hr_daily rows -> never a fabricated 0
+    ranges = payload["ranges"]["recovery"]
+    # 28 Oct - 89 days = 31 Jul < 8 Aug -> locked; on 5 Nov the nominal
+    # start is 5 Nov - 89 days = 8 Aug, the first scored day -> unlocks.
+    assert ranges["90d"]["locked"] is True
+    assert ranges["90d"]["unlocks_on"] == date(2026, 11, 5)
+    # 30d = 29 Sep..28 Oct, but sync never writes today -> 29 scored days
+    assert ranges["30d"]["locked"] is False and ranges["30d"]["stats"]["n"] == 29
+    assert ranges["all"]["locked"] is False
+    _write_json(tmp_path / "scores.json", payload)  # raises if a coordinate key leaked
