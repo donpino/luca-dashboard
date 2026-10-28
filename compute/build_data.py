@@ -288,9 +288,11 @@ def build_scores(db, today: date) -> dict:
         db,
         "biometrics",
         "date,device,sleep_total_min,sleep_deep_min,sleep_rem_min,sleep_light_min,"
-        "sleep_awake_min,rhr,hrv_overnight,respiration_overnight,sleep_start_local,sleep_end_local",
+        "sleep_awake_min,rhr,hrv_overnight,respiration_overnight,sleep_start_local,sleep_end_local,is_partial",
     )
-    hr_daily = [r for r in fetch_all(db, "hr_daily", "date,samples") if r["date"] >= SCORES_START.isoformat()]
+    hr_daily = [
+        r for r in fetch_all(db, "hr_daily", "date,samples,is_partial") if r["date"] >= SCORES_START.isoformat()
+    ]
     activities = [
         a
         for a in fetch_all(db, "activities", "id,date,type,duration_s,avg_hr,distance_km,start_ts")
@@ -299,9 +301,16 @@ def build_scores(db, today: date) -> dict:
     streams = {r["activity_id"]: r["samples"] for r in fetch_all(db, "activity_hr", "activity_id,samples")}
 
     raw = score_series(biometrics, hr_daily, activities, streams, SCORES_START, today)
+    # v1.36: dates written by the manual "Sync now" for a day still in
+    # progress. Flagged, never hidden — the page labels them as partial.
+    partial_dates = {r["date"] for r in biometrics if r.get("is_partial")} | {
+        r["date"] for r in hr_daily if r.get("is_partial")
+    }
+    partial_hr = [r for r in hr_daily if r.get("is_partial") and r["samples"]]
     series = [
         {
             "date": e["date"],
+            "partial": e["date"].isoformat() in partial_dates,
             "recovery": None if isinstance(e["recovery"], InsufficientData) else e["recovery"]["score"],
             "band": None if isinstance(e["recovery"], InsufficientData) else e["recovery"]["band"],
             "strain": None if isinstance(e["strain"], InsufficientData) else e["strain"]["strain"],
@@ -329,6 +338,9 @@ def build_scores(db, today: date) -> dict:
     )
     return {
         "as_of": today,
+        # epoch ms of the newest HR sample on a partial day: "as of HH:MM"
+        "data_through_ms": max(r["samples"][-1][0] for r in partial_hr) if partial_hr else None,
+        "partial_dates": sorted(partial_dates),
         "recovery": rec,
         "recovery_calibrating": calibrating,
         "strain": strain_latest and {**strain_latest, "activities": acts_on_strain_day},

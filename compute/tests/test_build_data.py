@@ -256,3 +256,22 @@ def test_build_scores_locks_ranges_and_passes_the_coordinate_gate(tmp_path):
     assert ranges["30d"]["locked"] is False and ranges["30d"]["stats"]["n"] == 29
     assert ranges["all"]["locked"] is False
     _write_json(tmp_path / "scores.json", payload)  # raises if a coordinate key leaked
+
+
+def test_build_scores_flags_a_partial_day_without_hiding_it():
+    from datetime import timedelta
+
+    from build_data import SCORES_START, build_scores
+
+    today = SCORES_START + timedelta(days=10)
+    bio = [
+        {"date": (SCORES_START + timedelta(days=i)).isoformat(), "device": "fr70", "hrv_overnight": 50, "rhr": 48,
+         "sleep_total_min": 450, "is_partial": i == 10}
+        for i in range(11)
+    ]
+    hr = [{"date": today.isoformat(), "samples": [[1000, 60], [121000, 62]], "is_partial": True}]
+    payload = build_scores(_FakeDB({"biometrics": bio, "hr_daily": hr}), today)
+    assert payload["partial_dates"] == [today.isoformat()]
+    assert payload["series"][-1]["partial"] is True and payload["series"][-2]["partial"] is False
+    assert payload["data_through_ms"] == 121000
+    assert payload["strain"]["date"] == today  # today's partial strain is shown, labelled

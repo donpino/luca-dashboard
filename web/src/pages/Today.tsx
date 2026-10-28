@@ -4,7 +4,9 @@
 // Every number and decision was made in compute/metrics.py (CLAUDE.md
 // rule 3); this page lays it out.
 
+import { useCallback, useState } from 'react'
 import LiquidSphere from '../components/LiquidSphere'
+import SyncButton from '../components/SyncButton'
 import { useJson } from '../components/useJson'
 import { flagLabel, flagText } from '../panels/flagCopy'
 import { BAND_COLOR, COLOR, STRAIN_MAX, type ScoreKey, type ScoresResponse } from '../panels/scores'
@@ -107,8 +109,10 @@ function MetricRow({ name, sub, value, color }: RowProps) {
 }
 
 export default function Today({ onOpen }: { onOpen: (key: ScoreKey) => void }) {
-  const today = useJson<TodayResponse>('today.json')
-  const scores = useJson<ScoresResponse>('scores.json')
+  const [version, setVersion] = useState(0)
+  const reload = useCallback(() => setVersion(Date.now()), [])
+  const today = useJson<TodayResponse>('today.json', version)
+  const scores = useJson<ScoresResponse>('scores.json', version)
 
   if (today.status === 'loading' || scores.status === 'loading') {
     return <p className="status-text status-text--muted">Loading…</p>
@@ -132,12 +136,21 @@ export default function Today({ onOpen }: { onOpen: (key: ScoreKey) => void }) {
           <p className="today-head__date">{longDate(t.date)}</p>
         </div>
         {s?.recovery && <LiquidSphere size={40} level={s.recovery.score / 100} color={BAND_COLOR[s.recovery.band]} bubbles={false} />}
+        <SyncButton onDone={reload} />
         <a className="round-btn" href="/log/" aria-label="Log today">
           <svg width="20" height="20" viewBox="0 0 24 24" aria-hidden="true">
             <path d="M12 5v14M5 12h14" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" />
           </svg>
         </a>
       </header>
+
+      {s?.data_through_ms && (
+        <p className="sync-status">
+          Today so far · as of{' '}
+          {new Date(s.data_through_ms).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} · completes tomorrow
+          morning
+        </p>
+      )}
 
       {s ? (
         <ScoreCard scores={s} latestDay={latestDay} onOpen={onOpen} />

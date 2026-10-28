@@ -97,8 +97,13 @@ def test_recovery_bands():
 
 # --- strain -----------------------------------------------------------------
 
-# rhr 50, HR_MAX 201 -> reserve 151. 150 bpm = 66.2% HRR -> zone 2.
-# 180 bpm = 86.1% HRR -> zone 4. 60 bpm = 6.6% -> zone 0.
+# rhr 50, HR_MAX 201 -> reserve 151. Banister, sedentary floor 20% HRR:
+# floor rate = 0.20 * 0.64 * e^0.384 = 0.128 * 1.468145 = 0.187923 /min
+# D = 1440 * (0.64 * e^1.92 - 0.187918) + 1 = 1440 * (4.365413 - 0.187923) + 1 = 6016.59
+# ln D = 8.702277
+# 150 bpm: x = 100/151 = 0.662252, rate = 0.423841 * e^1.271523 = 1.511538 -> net 1.323615
+# 180 bpm: x = 130/151 = 0.860927, rate = 0.550993 * e^1.652980 = 2.877573 -> net 2.689650
+# 60 bpm: x = 0.066 -> below the floor -> 0
 S = 1_761_580_800_000  # an epoch-ms activity start
 
 
@@ -111,33 +116,40 @@ def _run(stream=True):
 ALL_DAY = {"samples": [[S - 120_000, 60], [S + 60_000, 180], [S + 720_000, 60]]}
 
 
+def test_strain_constants_hand_checked():
+    from metrics import SEDENTARY_RATE, STRAIN_DENOMINATOR
+
+    assert SEDENTARY_RATE == pytest.approx(0.187923, abs=1e-6)
+    assert STRAIN_DENOMINATOR == pytest.approx(6016.59, abs=0.01)
+
+
 def test_strain_activity_stream_replaces_all_day_inside_window():
-    # Activity: 600 one-second intervals at zone 2 -> 600 * 2 / 60 = 20.
+    # Activity: 10 min at net 1.323615 -> TRIMP 13.2362.
     # All-day: the 180-bpm sample sits inside the window and is dropped;
-    # the remaining two are 840 s apart, capped to 120 s, zone 0 -> 0.
-    # strain = 21 * ln(21) / ln(7201) = 21 * 3.044522 / 8.881975 = 7.198
+    # the remaining two are 60 bpm, below the floor -> 0.
+    # strain = 21 * ln(14.2362) / 8.702277 = 21 * 2.655787 / 8.702277 = 6.409
     activity, streams = _run()
     result = strain(D, ALL_DAY, [activity], streams, rhr=50)
-    assert result["trimp"] == pytest.approx(20.0)
+    assert result["trimp"] == pytest.approx(13.2362, abs=1e-3)
     assert result["rest_of_day_trimp"] == 0
-    assert result["activity_share"] == 1.0  # 20 / 20
-    assert result["strain"] == pytest.approx(7.198, abs=0.001)
+    assert result["activity_share"] == 1.0
+    assert result["strain"] == pytest.approx(6.409, abs=0.001)
 
 
 def test_strain_without_stream_falls_back_on_all_day():
-    # No stream -> no window -> the 180-bpm sample counts: zone 4 for
-    # min(660 s, 120 s cap) = 2 min -> TRIMP 8.
-    # strain = 21 * ln(9) / ln(7201) = 21 * 2.197225 / 8.881975 = 5.195
+    # No stream -> no window -> the 180-bpm sample counts for
+    # min(660 s, 120 s cap) = 2 min at net 2.689650 -> TRIMP 5.37930.
+    # strain = 21 * ln(6.37931) / 8.702277 = 21 * 1.853060 / 8.702277 = 4.472
     activity, streams = _run(stream=False)
     result = strain(D, ALL_DAY, [activity], streams, rhr=50)
-    assert result["trimp"] == pytest.approx(8.0)
-    assert result["strain"] == pytest.approx(5.195, abs=0.001)
+    assert result["trimp"] == pytest.approx(5.37931, abs=1e-4)
+    assert result["strain"] == pytest.approx(4.472, abs=0.001)
 
 
-def test_strain_zone_cut_is_inclusive():
-    # 125.5 bpm is exactly 50% HRR -> zone 1, for one 120 s interval -> 2.
-    day = {"samples": [[0, 125.5], [120_000, 60]]}
-    assert strain(D, day, [], {}, rhr=50)["trimp"] == pytest.approx(2.0)
+def test_strain_sedentary_floor_nets_to_zero():
+    # exactly 20% HRR = 50 + 0.2 * 151 = 80.2 bpm -> rate == floor -> 0
+    day = {"samples": [[0, 80.2], [120_000, 60]]}
+    assert strain(D, day, [], {}, rhr=50)["trimp"] == pytest.approx(0.0, abs=1e-9)
 
 
 def test_strain_insufficient_without_all_day_hr_or_rhr():

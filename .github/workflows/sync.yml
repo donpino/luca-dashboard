@@ -14,7 +14,16 @@ name: Garmin sync
 on:
   schedule:
     - cron: "0 5 * * *"
-  workflow_dispatch: {}
+  # Manual runs — the Actions tab, or the dashboard's "Sync now" button via
+  # the Worker's /api/sync (DASHBOARD_SPEC.md §4, §6, v1.36). Only a manual
+  # run can set include_today; the 05:00 UTC schedule never writes the day
+  # in progress, so it can't record a night the athlete is still sleeping.
+  workflow_dispatch:
+    inputs:
+      include_today:
+        description: "Also sync today so far (rows marked is_partial)"
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -133,7 +142,10 @@ jobs:
           GARMIN_PASSWORD: ${{ secrets.GARMIN_PASSWORD }}
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
-        run: python sync.py
+          # Empty on schedule/push (no inputs), so the flag is only ever
+          # passed by an explicit manual include_today run.
+          INCLUDE_TODAY: ${{ inputs.include_today && '--include-today' || '' }}
+        run: python sync.py $INCLUDE_TODAY
 
       - name: Check whether a token exists to cache
         id: token_check_post

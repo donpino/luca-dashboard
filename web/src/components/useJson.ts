@@ -5,11 +5,12 @@ import { useEffect, useState } from 'react'
 
 export type LoadState<T> = { status: 'loading' } | { status: 'error' } | { status: 'ready'; data: T }
 
-export function useJson<T>(file: string): LoadState<T> {
+export function useJson<T>(file: string, version = 0): LoadState<T> {
   const [state, setState] = useState<LoadState<T>>({ status: 'loading' })
   useEffect(() => {
     let cancelled = false
-    fetch(`/data/${file}`)
+    // version > 0 after a manual sync: bypass any cached copy of the file
+    fetch(version ? `/data/${file}?v=${version}` : `/data/${file}`, version ? { cache: 'no-store' } : undefined)
       .then((res) => {
         if (!res.ok) throw new Error(`${file}: ${res.status}`)
         return res.json() as Promise<T>
@@ -23,6 +24,6 @@ export function useJson<T>(file: string): LoadState<T> {
     return () => {
       cancelled = true
     }
-  }, [file])
+  }, [file, version])
   return state
 }

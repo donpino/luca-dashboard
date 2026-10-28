@@ -65,6 +65,7 @@ export interface Sleep {
 
 export interface SeriesEntry {
   date: string
+  partial: boolean // v1.36: written by a manual sync, day still in progress
   recovery: number | null
   band: Band | null
   strain: number | null
@@ -88,6 +89,8 @@ export interface ScoreRange {
 
 export interface ScoresResponse {
   as_of: string
+  data_through_ms: number | null // newest HR sample on a partial day
+  partial_dates: string[]
   recovery: Recovery | null
   recovery_calibrating: { n: number; required: number } | null
   strain: Strain | null

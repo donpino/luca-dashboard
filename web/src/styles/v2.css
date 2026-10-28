@@ -693,3 +693,29 @@ body {
   font-size: 26px;
   font-weight: 700;
 }
+
+/* ---- v1.36 "Sync now" ---- */
+
+.today-head {
+  flex-wrap: wrap;
+}
+
+.sync-status {
+  margin: -6px 0 0;
+  font-size: 13px;
+  color: #e4e2f0;
+}
+
+.round-btn:disabled {
+  cursor: default;
+}
+
+.round-btn--spin svg {
+  animation: spin 1.1s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}

@@ -10,6 +10,8 @@ from sync import (
     build_session_map,
     normalize_type,
     repair_session_links,
+    resolve_window,
+    sync_biometrics,
     sync_activities,
     sync_hr_daily,
 )
@@ -201,3 +203,33 @@ def test_sleep_window_reads_local_timestamp_as_wall_clock():
 
 def test_start_ts_is_utc_aware():
     assert _gmt_iso("2026-08-08T17:27:34.0") == "2026-08-08T17:27:34+00:00"
+
+
+# --- manual "Sync now" (spec §6, v1.36) ---------------------------------------
+
+
+def test_window_never_includes_today_unless_asked():
+    today = date.today()
+    assert today not in resolve_window(None, None)
+    days = resolve_window(None, None, include_today=True)
+    assert days[-1] == today and len(days) == 4  # trailing 3 days + today
+
+
+def test_partial_flag_written_and_cleared_by_complete_resync():
+    class Bio(FakeGarminClient):
+        def get_stats(self, ds):
+            return {"restingHeartRate": 50}
+
+        def get_sleep_data(self, ds):
+            return {"dailySleepDTO": {"sleepTimeSeconds": 25200}}
+
+        def get_hrv_data(self, ds):
+            return {"hrvSummary": {"lastNightAvg": 48}}
+
+    db = FakeSupabase()
+    db.table("biometrics")._conflict_key = "date"
+    d = date(2026, 10, 28)
+    sync_biometrics(Bio({}), db, d, partial=True)
+    assert db.table("biometrics").rows["2026-10-28"]["is_partial"] is True
+    sync_biometrics(Bio({}), db, d)  # next morning's scheduled run
+    assert db.table("biometrics").rows["2026-10-28"]["is_partial"] is False

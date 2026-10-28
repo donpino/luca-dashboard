@@ -790,8 +790,20 @@ RECOVERY_RED_MAX = 34.0
 RECOVERY_YELLOW_MAX = 67.0
 
 STRAIN_MAX = 21.0
-STRAIN_DENOMINATOR = 7201.0  # Edwards ceiling: zone 5 held 24 h = 7200, +1
-STRAIN_ZONE_CUTS = (0.5, 0.6, 0.7, 0.8, 0.9)  # %HRR lower bounds of zones 1..5
+# Banister exponential TRIMP (Morton, Fitz-Clarke & Banister 1990), v1.36.
+# The published pair is sex-specific (0.64·e^(1.92x) / 0.86·e^(1.67x)) and
+# must travel together; this is the pair the athlete approved on 28 Oct.
+BANISTER_SCALE = 0.64
+BANISTER_B = 1.92
+# The "cost of being alive": per-minute load at this %HRR is subtracted from
+# every sample, so ordinary sitting nets to zero but daily movement counts.
+# A calibration, not a measurement — NOOP uses 0.10; 0.20 chosen against
+# the athlete's 81 FR70 days (rest-day mean 4.7, training-day mean 9.0).
+SEDENTARY_HRR = 0.20
+SEDENTARY_RATE = SEDENTARY_HRR * BANISTER_SCALE * math.exp(BANISTER_B * SEDENTARY_HRR)
+# Log-map denominator: a 24 h day at 100% HRR minus a full day of the
+# sedentary rate, +1 — the theoretical maximum day maps to exactly 21.
+STRAIN_DENOMINATOR = 1440 * (BANISTER_SCALE * math.exp(BANISTER_B) - SEDENTARY_RATE) + 1
 ALL_DAY_SAMPLE_CAP_S = 120  # Garmin all-day HR cadence; longer gaps are non-wear, not load
 ACTIVITY_SAMPLE_CAP_S = 10  # per-second stream; a longer gap is a dropout
 
@@ -845,19 +857,19 @@ def _device_rows_by_date(biometrics: list[dict], d: date) -> dict[date, dict]:
 # --- strain ---------------------------------------------------------------
 
 
-def _zone_weight(hr: float, rhr: float) -> int:
-    hrr = (hr - rhr) / (HR_MAX - rhr)
-    return sum(1 for cut in STRAIN_ZONE_CUTS if hrr >= cut)
+def _banister_rate(hr: float, rhr: float) -> float:
+    """Per-minute load above the sedentary floor; never negative."""
+    x = max(0.0, min(1.0, (hr - rhr) / (HR_MAX - rhr)))
+    return max(x * BANISTER_SCALE * math.exp(BANISTER_B * x) - SEDENTARY_RATE, 0.0)
 
 
 def _trimp_minutes(samples: list[tuple[int, float]], rhr: float, cap_s: int) -> float:
-    """Edwards-style TRIMP on %HRR: each sample contributes its zone weight
-    (0..5) × the seconds until the next sample, capped so a gap in the
-    stream is not counted as load."""
+    """Banister TRIMP on %HRR: each sample's rate × the minutes until the
+    next sample, capped so a gap in the stream is not counted as load."""
     total = 0.0
     for (ts, hr), (next_ts, _) in zip(samples, samples[1:]):
         dt = min((next_ts - ts) / 1000, cap_s)
-        total += _zone_weight(hr, rhr) * dt / 60
+        total += _banister_rate(hr, rhr) * dt / 60
     return total
 
 

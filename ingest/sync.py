@@ -3,7 +3,7 @@ the future scheduled job (CLAUDE.md build order, DASHBOARD_SPEC.md §6) —
 there is no separate backfill script.
 
 Usage:
-    python sync.py [--from YYYY-MM-DD] [--to YYYY-MM-DD]
+    python sync.py [--from YYYY-MM-DD] [--to YYYY-MM-DD] [--include-today]
 
 Both omitted defaults to a trailing 3-day window ending yesterday. If only
 one of --from/--to is given, that's a usage error — pass both or neither.
@@ -12,6 +12,12 @@ Two clamps apply after resolving the window, both logged when they fire:
   - --to is never today or later. Today's steps/stress/body-battery are
     mid-day values; a row written now would stay permanently
     half-recorded. A --to of today or later clamps to yesterday.
+    The one exception is --include-today (spec v1.36, the dashboard's
+    "Sync now" button): today is appended to the window and its
+    biometrics/hr_daily rows are written with is_partial = true. The
+    next scheduled run's trailing window rewrites that date as a complete
+    day with is_partial = false, so a partial row is never permanent and
+    never unlabelled. The scheduled run never passes this flag.
   - --from is never earlier than GARMIN_SOURCE_START (2026-08-08), the
     Strava/Garmin source boundary (spec §6). Earlier dates belong to the
     one-time Strava archive import, not this path.
@@ -123,7 +129,7 @@ def get_supabase() -> Client:
     return create_client(url, key)
 
 
-def resolve_window(from_arg: str | None, to_arg: str | None) -> list[date]:
+def resolve_window(from_arg: str | None, to_arg: str | None, include_today: bool = False) -> list[date]:
     today = date.today()
     yesterday = today - timedelta(days=1)
 
@@ -152,6 +158,9 @@ def resolve_window(from_arg: str | None, to_arg: str | None) -> list[date]:
             "earlier dates belong to the Strava import (spec §6)."
         )
         start = GARMIN_SOURCE_START
+
+    if include_today:
+        end = today
 
     if start > end:
         print(
@@ -228,7 +237,7 @@ def build_session_map(sessions_rows: list[dict]) -> dict[str, str]:
     return {d: sid for d, sid in session_map.items() if sid is not None}
 
 
-def sync_biometrics(client, db: Client, d: date) -> None:
+def sync_biometrics(client, db: Client, d: date, partial: bool = False) -> None:
     ds = d.isoformat()
     stats = client.get_stats(ds) or {}
     sleep = client.get_sleep_data(ds) or {}
@@ -266,6 +275,8 @@ def sync_biometrics(client, db: Client, d: date) -> None:
         "steps": stats.get("totalSteps"),
         "stress_avg": stats.get("averageStressLevel"),
         "device": DEVICE,
+        # always written, so a complete re-sync clears a partial row (v1.36)
+        "is_partial": partial,
     }
     db.table("biometrics").upsert(row, on_conflict="date").execute()
     print(
@@ -275,7 +286,7 @@ def sync_biometrics(client, db: Client, d: date) -> None:
     )
 
 
-def sync_hr_daily(client, db: Client, d: date) -> None:
+def sync_hr_daily(client, db: Client, d: date, partial: bool = False) -> None:
     """All-day HR at Garmin's 2-minute cadence, for strain (spec §7). A day
     with no readings at all is non-wear and writes no row."""
     ds = d.isoformat()
@@ -285,7 +296,7 @@ def sync_hr_daily(client, db: Client, d: date) -> None:
         print(f"{ds}: no all-day HR — non-wear day, skipping hr_daily row.")
         return
     db.table("hr_daily").upsert(
-        {"date": ds, "samples": samples, "device": DEVICE}, on_conflict="date"
+        {"date": ds, "samples": samples, "device": DEVICE, "is_partial": partial}, on_conflict="date"
     ).execute()
     print(f"{ds}: hr_daily upserted ({len(samples)} samples).")
 
@@ -411,9 +422,15 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--from", dest="from_", metavar="YYYY-MM-DD")
     parser.add_argument("--to", dest="to_", metavar="YYYY-MM-DD")
+    parser.add_argument(
+        "--include-today",
+        action="store_true",
+        help="also write today, marked is_partial (manual 'Sync now' only)",
+    )
     args = parser.parse_args()
 
-    days = resolve_window(args.from_, args.to_)
+    days = resolve_window(args.from_, args.to_, args.include_today)
+    today = date.today()
     if not days:
         return
 
@@ -428,8 +445,8 @@ def main() -> None:
 
     total_activities = 0
     for d in days:
-        sync_biometrics(client, db, d)
-        sync_hr_daily(client, db, d)
+        sync_biometrics(client, db, d, partial=d == today)
+        sync_hr_daily(client, db, d, partial=d == today)
         total_activities += sync_activities(client, db, d, session_map)
 
     linked, still_null = repair_session_links(db, session_map)

@@ -1,4 +1,4 @@
-# Training Dashboard — Build Spec v1.35
+# Training Dashboard — Build Spec v1.36
 
 **Athlete:** Luca · **Campaign:** middle-distance, Foundation block → 2032
 **Status:** Phase 1 complete — `daily` table, RLS/grants, `/log`,
@@ -2407,6 +2407,36 @@ activity in the same day still writes normally, `indoor_cardio` resolves
 to `'other'`, and a `TYPE_MAP` value-set assertion guards against a
 future typo landing outside `{'running', 'cycling', 'other'}`.
 
+**Amendments in v1.36 (28 Oct 2026)** — two changes the athlete asked for
+the same day v1.35 shipped:
+
+- **Strain switches from Edwards-style zones to Banister TRIMP** (§7). The
+  zone method only counts minutes at ≥ 50% HRR (≈ 126 bpm), so ordinary
+  daily life — which rarely gets there — scored ~0, unlike WHOOP. Banister
+  credits every minute with `x · 0.64 · e^(1.92x)` and subtracts a
+  sedentary floor. NOOP's floor (10% HRR) was simulated on the athlete's
+  81 FR70 days and rejected: rest days averaged 8.3 against 10.6 for
+  training days, so the scale stopped separating them. A 20% floor gives
+  rest-day mean 4.7 (range 1.9–8.5) and training-day mean 9.0 (max 12.1),
+  and was chosen by the athlete. Simulated alternatives (zones / 10% /
+  15% / 25%) are recorded in this session's notes, not re-derived here.
+  The floor is a calibration, not a measurement: revisit once training
+  resumes after the 12 Oct 2026 ACL surgery. The coefficient pair is
+  Banister's published men's pair (0.64, 1.92), the pair the athlete's
+  approved simulation used.
+- **"Sync now" button** (§4, §6, §8.1). A manual sync from the Today page
+  writes last night **and today so far** (steps, all-day HR, activities),
+  with today's `biometrics` / `hr_daily` rows marked `is_partial`
+  (migration 010). The next 05:00 UTC scheduled run — still clamped to
+  yesterday, by the athlete's choice, so it never records a night they
+  are still asleep for — rewrites that date as complete. The v1.4 clamp's
+  reason (a row "permanently half-recorded") is answered by the flag plus
+  that overwrite, not by never writing today. The button goes through
+  the existing Worker: `/api/sync` checks the Cloudflare Access JWT,
+  enforces one run at a time and a 10-minute cooldown (Garmin
+  rate-limits repeated logins — the 26 Oct 429s), and dispatches
+  `sync.yml` with `include_today`. No computer needs to be on.
+
 **Amendments in v1.35 (28 Oct 2026)** — the athlete reverses decision 7:
 three composite scores — **Recovery, Strain, Sleep** — are added, and the
 frontend is redesigned around them in a WHOOP/NOOP-style visual language.
@@ -2650,6 +2680,20 @@ it to carry.
 
 ---
 
+**`/api/sync` (v1.36).** `web/worker/index.ts` runs in front of the static
+assets for `/api/*` only (`run_worker_first`); every other path is served
+from `dist/` unchanged. `GET` returns the latest manual `sync.yml` run and
+the latest chained `deploy.yml` run; `POST` dispatches `sync.yml` with
+`include_today = true`, refusing while a manual sync is running (409) or
+within 10 minutes of the last one's start (429). Every request must carry a
+valid Cloudflare Access JWT (`Cf-Access-Jwt-Assertion`, RS256, checked
+against the team's certs, issuer and application AUD) — a second gate
+behind Access itself, failing closed (403) if not configured. Three Worker
+secrets, set in the Cloudflare dashboard and never in the repo (CLAUDE.md
+rule 8): `GITHUB_DISPATCH_TOKEN` (fine-grained PAT, this repository only,
+*Actions: read and write*, nothing else), `ACCESS_TEAM_DOMAIN`,
+`ACCESS_AUD`. Missing token → 503, rendered as "Sync isn't set up yet".
+
 ## 5. Data model (Supabase)
 
 ### `daily` — manual entry, one row per day
@@ -2720,6 +2764,7 @@ binding on the ingest layer, not an implementation detail to re-derive:
 | `body_battery_min`, `body_battery_max` | `get_stats(date).bodyBatteryLowestValue` / `.bodyBatteryHighestValue` | single clean source, no ambiguity |
 | `steps` | `get_stats(date).totalSteps` | |
 | `stress_avg` | `get_stats(date).averageStressLevel` | |
+| `is_partial` | **not an API field.** `boolean not null default false` (migration 010, v1.36) | `true` only on a row written by a manual `--include-today` sync for the day still in progress; every other write sets `false`, so the next complete sync clears it. |
 | `sleep_start_local`, `sleep_end_local` | `get_sleep_data(date).dailySleepDTO.{sleepStartTimestampLocal,sleepEndTimestampLocal}` | **Added v1.35, migration 009.** Garmin's `*Local` epoch-ms is already shifted to local time; read as UTC it gives the wall-clock reading, stored as `timestamp` (no zone). Feeds `sleep_score`'s consistency term only. NULL when Garmin scored no window. |
 | `device` | **not an API field on any of the above.** Hardcoded `'fr70'` in the Garmin ingest path. No ingest path writes `'amazfit'`; the `biometrics` series therefore begins 8 Aug 2026, with no pre-FR70 rows. |
 
@@ -2929,7 +2974,8 @@ the device break regardless.
 `updated_at`. `samples` = `get_heart_rates(date).heartRateValues` as
 `[[epoch_ms_utc, bpm], …]` with null readings dropped (~720 pairs at
 Garmin's 2-minute cadence). A day with no reading writes no row (§6
-non-wear rule, same reasoning).
+non-wear rule, same reasoning). `is_partial` (v1.36, migration 010): same
+meaning as on `biometrics`.
 
 **`activity_hr`** — one row per activity: `activity_id` PK, FK →
 `activities.id` `on delete cascade` · `samples` jsonb · `updated_at`.
@@ -3043,6 +3089,13 @@ sources under two different ids (Strava's and Garmin's own
 the ids never collide. Only the date boundary prevents that day being
 written twice under two rows.
 
+**Manual "Sync now" (v1.36).** `sync.py --include-today` appends today to the
+window and writes today's `biometrics` and `hr_daily` with `is_partial =
+true`; activities recorded so far are written normally (a recorded activity
+is complete). Only a manual `workflow_dispatch` run with `include_today` passes
+the flag; the schedule never does. The trailing 3-day window of the next
+scheduled run rewrites the date as complete.
+
 **Score inputs (v1.35).** For each day in the window, after `biometrics`,
 `sync.py` calls `get_heart_rates(date)` and upserts `hr_daily` on `date`.
 For each activity, after its `activities` row is upserted (the FK needs
@@ -3075,7 +3128,7 @@ These are binding. The frontend must not recompute or reinterpret them.
 | `session_for_date` | **Added v1.26, §8.1 Panel 2.** The single `sessions` row for a given date (`sessions.date` is unique, §5), narrowed to `session_type`/`purpose`/`prescription`/`done`. No row is `None`, a real state, not an error. |
 | `today_flag` | **Added v1.26, §8.1 Panel 3.** At most one of `{shin, illness, volume_ramp}`, evaluated in that order, first hit wins, `None` if nothing qualifies. Rule 1: `daily.shin > 0` today or yesterday (today first), **NULL is never a hit**. Rule 2: `daily.illness is True` today or yesterday (today first). Rule 3: completed rolling 7-day km (window ending **yesterday**, never today — "never project the current week forward") more than `TODAY_FLAG_VOLUME_RAMP_PCT` (10%, strict `>`) above the preceding completed 7-day window, via `rolling_7d_km`/`ramp_pct`. **Distinct from `ramp_pct`'s own row above**: that compares calendar Mon–Sun weeks (`weekly_km`, §8.2); this compares two trailing 7-day windows (`rolling_7d_km`) — same 10% tolerance, different question, not shared code. **Added v1.27 — rule 3 is suppressed entirely, falling through as a non-match, if either 7-day window contains any date before `UNDERSTATED_VOLUME_CUTOFF` (§7's own v1.7 floor-not-measurement note, same constant `shin_series` already reads).** No caveat, no warning render — see the v1.27 amendment for why a caveated number was rejected. Suppression lifts 2026-08-22, once both windows clear the cutoff. |
 | `recovery` | **Added v1.35.** 0–100, from NOOP's Charge. For night `d`, each input is a z-score against the **prior 30 days on the current device** (`d` itself excluded; rule 5): HRV as `(ln hrv − mean ln hrv) / σ`, RHR and respiration as `(mean − x) / σ` (lower is better), prior-day `strain` as `(mean − x) / σ`, and `sleep_score / 100` as `(x − 0.85) / 0.12` (no baseline). σ = 1.253 × max(mean absolute deviation, floor); floors ln-HRV 0.08, RHR 2 bpm, respiration 0.5, strain 1.05. Weights HRV 0.55, RHR 0.20, sleep 0.15, respiration 0.05, prior-day strain 0.05; an absent input drops out and the rest renormalize. Composite z → `100 / (1 + e^(−1.6 (z + 0.2)))`, so z = 0 reads ≈ 58%. **HRV is required:** fewer than 4 prior HRV nights returns insufficient-data (rendered as *calibrating n/4*); ≥ 14 is `trusted`. Bands: < 34 red, 34–67 yellow, ≥ 67 green. Output carries the per-input z and the weight actually applied after renormalization, for the contributors panel. |
-| `strain` | **Added v1.35.** 0–21, from NOOP's Effort (Edwards-style TRIMP on %HRR, Karvonen). `%HRR = (hr − rhr_d) / (201 − rhr_d)`, `rhr_d` that day's `biometrics.rhr`. Zone weight 0–5 at 50/60/70/80/90 %HRR (a cut-off is inclusive). TRIMP = Σ weight × minutes to the next sample, gap capped at 10 s inside an activity stream and 120 s on the all-day series (a longer gap is non-wear, not load). Each activity with an `activity_hr` stream is scored on that stream over `[start_ts, start_ts + duration_s)`; every all-day sample outside those windows is scored on the 2-minute series, so no minute counts twice. An activity without a stream falls back on the all-day series. `strain = 21 × ln(TRIMP + 1) / ln(7201)`. Output also carries `activity_share` = activity-stream TRIMP / day TRIMP (`None` on a zero-load day). **All activity types count, cycling included** — this is cardiovascular load; rule 6 binds `weekly_km` only. No `hr_daily` row, or a null `rhr`, is insufficient-data, never 0. |
+| `strain` | **Added v1.35, method changed v1.36.** 0–21, from NOOP's Effort with its Banister TRIMP option (Morton, Fitz-Clarke & Banister 1990). `x = clamp((hr − rhr_d) / (201 − rhr_d), 0, 1)`, `rhr_d` that day's `biometrics.rhr`. Per-minute rate `max(x · 0.64 · e^(1.92x) − F, 0)`, sedentary floor `F` = the rate at x = 0.20 (= 0.18792/min) — ordinary sitting nets to zero, daily movement counts (v1.36 amendment for why 0.20). TRIMP = Σ rate × minutes to the next sample, gap capped at 10 s inside an activity stream and 120 s on the all-day series (a longer gap is non-wear, not load). Each activity with an `activity_hr` stream is scored on that stream over `[start_ts, start_ts + duration_s)`; every all-day sample outside those windows is scored on the 2-minute series, so no minute counts twice. An activity without a stream falls back on the all-day series. `strain = 21 × ln(TRIMP + 1) / ln(D)`, `D = 1440 · (0.64 · e^1.92 − F) + 1 = 6016.59`, so a theoretical 24 h at 100% HRR maps to 21. Output also carries `activity_share` = activity-stream TRIMP / day TRIMP (`None` on a zero-load day). **All activity types count, cycling included** — this is cardiovascular load; rule 6 binds `weekly_km` only. No `hr_daily` row, or a null `rhr`, is insufficient-data, never 0. On an `is_partial` day the value is today-so-far and is labelled as such (§8.1). |
 | `sleep_score` | **Added v1.35.** 0–100, from NOOP's Rest. Weighted mean of: **duration** `min(1, asleep / need)` 0.50; **efficiency** `asleep / (asleep + awake)` 0.20; **restorative** `min(1, ((deep + rem) / asleep) / 0.50) × f`, `f = 0.5 + 0.5 × min(1, (deep / asleep) / 0.13)` 0.20; **consistency** 0.10 = `1 − SD / 90 min` clamped to [0, 1], SD the mean of the population SDs of bed and wake clock times (minutes after noon, so midnight doesn't wrap) over the 7 nights ending `d`, needing ≥ 3 nights with a recorded window. An absent part drops and the weights renormalize. **Need** = 75th percentile of the prior 30 nights' sleep, floored at 8 h (adult target) and capped at 9.5 h; fewer than 7 nights → 8 h. No sleep for the night is insufficient-data. |
 | `score_series`, `range_stats` | **Added v1.35.** `score_series` computes `strain` for every date first, then `sleep_score` and `recovery` per date (recovery reads the prior day's strain). `range_stats` returns mean/min/max/n over a range and `delta` = that mean minus the mean of the equal-length window immediately before it (`None` if that window is empty) — §9's per-range mean and delta, computed here, never in the frontend. |
 
@@ -3129,7 +3182,7 @@ cards below (its history stays in those amendments).
 
 | Block | Answers | Encoding |
 |---|---|---|
-| Header | Which day | "Today", the date, a mini Recovery sphere, and a `+` linking to `/log`. |
+| Header | Which day | "Today", the date, a mini Recovery sphere, a **Sync now** button (v1.36 — spins while syncing, then "Publishing…", then reloads the page's JSON once the chained deploy is live; shows the cooldown time if pressed within 10 minutes), and a `+` linking to `/log`. When today's data is partial, a line reads "Today so far · as of HH:MM · completes tomorrow morning" (`scores.json` `data_through_ms`). |
 | Score card | How recovered, how loaded, how slept | Three liquid spheres (§10): **Recovery** (fill = score / 100, colour = band), **Strain** (fill = strain / 21), **Sleep** (fill = score / 100). Each shows its number and opens its detail page. Each is the **latest date that has a value** and states that date when it isn't the most recent synced day — the v1.30 rule that a reading never looks more current than it is. Recovery with insufficient HRV history renders an empty sphere labelled *Calibrating n/4*. |
 | Flag | Anything needing a decision | Unchanged from v1.26/v1.27: at most one of shin → illness → volume ramp, absent when nothing qualifies. Renders as an amber card above the session. |
 | Today's session | What to do | Unchanged data (`session_for_date`): `session_type`, `purpose`, `prescription`. No row renders as plain text saying so. |
@@ -3505,6 +3558,7 @@ about a session, and fill-vs-hollow carries it without colour.
 | **1.5** *(added v1.6)* | Not yet scheduled — blocks 4 metrics below | New `laps` table + ingest path. Added v1.6, discovered writing `compute/metrics.py`: `easy_band_compliance`, `medio_control`, `aerobic_efficiency`, and `decoupling` (§7) each need per-run split/segment data (warm-up-excluded steady segment, first-half/second-half, "the medio segment") that no table stores today. Garmin's `get_activity(id).splitSummaries` already carries per-lap distance/duration/pace/HR and contains no coordinate-shaped keys (confirmed against the real fixture, `ingest/fixtures/garmin_activity_summary_23902996105.json`) — a `laps` table sourced from it is the actual fix, not a metric-definition change. Until this phase ships, those four metrics are implemented as correct pure functions with no real data to run on (§7). |
 | **2** | 17 Aug — Meso 1 boundary | Port `sessions`/`weekly`/`benchmarks` from Airtable. `easy_band_compliance`/`medio_control` additionally need Phase 1.5 before they render against real data — classifying a run as easy/medio is a `sessions` concern, but the segment data itself comes from `laps`. |
 | **2.5** *(added v1.35)* | 28 Oct 2026 | Recovery / Strain / Sleep scores (§7), migration 009 + ingest of `hr_daily` / `activity_hr` / sleep window, backfill from 8 Aug, `scores.json`, §8.1 Today and score detail pages rebuilt in the §10 v1.35 visual system. |
+| **2.6** *(added v1.36)* | 28 Oct 2026 | Strain on Banister TRIMP (20% sedentary floor); migration 010 (`is_partial`); `sync.py --include-today`; `/api/sync` Worker endpoint and the Today "Sync now" button. |
 | **3** | +21 days on FR70 | HRV/RHR baselines established, bands become real, autoregulation panel on |
 | **4** | Oct, post-benchmark | Campaign page — trajectory vs floor/target/stretch |
 | **5** | 2027 | Lab unlocks, panel by panel, as each `min_n` is crossed |
