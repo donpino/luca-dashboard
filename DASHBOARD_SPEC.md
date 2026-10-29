@@ -1,4 +1,4 @@
-# Training Dashboard — Build Spec v1.36
+# Training Dashboard — Build Spec v1.37
 
 **Athlete:** Luca · **Campaign:** middle-distance, Foundation block → 2032
 **Status:** Phase 1 complete — `daily` table, RLS/grants, `/log`,
@@ -2407,6 +2407,43 @@ activity in the same day still writes normally, `indoor_cardio` resolves
 to `'other'`, and a `TYPE_MAP` value-set assertion guards against a
 future typo landing outside `{'running', 'cycling', 'other'}`.
 
+**Amendments in v1.37 (29 Oct 2026)** — the Sleep score is rebuilt
+against the athlete's own history. Found on 29 Oct: the night of 28–29 Oct
+read **96** while Bevel gave ~70, and the athlete judged the night's
+values "anything but positive". Pulling the inputs showed why: the FR70
+reports deep sleep at 20–47% of the night (2–3× the physiological norm)
+and rarely scores any time awake (0 min that night), so v1.35's
+*restorative* part (fixed 13% deep / 50% deep+REM targets) sat at 1.00 on
+9 of 15 nights and *efficiency* at 0.90–1.00. The score had collapsed to
+"hours slept" with a floor near 70 (a 4 h 14 night read ~72). Decided
+with the athlete:
+
+- **Personal, not population, targets** for the stages, and **HRV and
+  RHR join the Sleep score** (the athlete's call — Garmin and Bevel both
+  weigh overnight physiology; a night with suppressed HRV and raised RHR
+  should not read near-perfect). New parts and weights: duration 0.35,
+  deep 0.10, REM 0.10, HRV 0.15, RHR 0.10, efficiency 0.10, consistency
+  0.10. *Restorative* is deleted.
+- **Baseline = every prior night on the current device**, not a 30-day
+  window. The athlete's reason: the last weeks are dominated by the
+  injury and the operation (HRV fell from ~80 in August to ~47, RHR rose
+  from ~42 to ~52), and a 30-day window would make that the new normal.
+  Rule 5 still applies — the window resets at a device break.
+- **Calibration: as simulated.** On the athlete's 83 nights the new score
+  gives 70 for 28–29 Oct (Bevel ~70), 50 for 27–28 Oct (Bevel 53), and
+  55–65 on ordinary nights; the athlete accepted that range.
+- **No double counting in Recovery.** Recovery reads a
+  `behavioural_score` — the same night without the HRV and RHR parts —
+  and, like every other Recovery input, compares it with the athlete's
+  own history (every prior night on the device, 5-point spread floor)
+  instead of v1.35's fixed `(x − 0.85) / 0.12`. That fixed centre was
+  calibrated to the old, saturated score; kept, it would have lowered
+  Recovery by ~4 points on average (up to 11) for no physiological reason.
+  With the personal comparison, October's Recovery moves 0 to +3.
+- The Sleep detail page reads each part's applied weight from
+  `scores.json` instead of hard-coding it, and shows tonight vs usual for
+  the four personal parts.
+
 **Amendments in v1.36 (28 Oct 2026)** — two changes the athlete asked for
 the same day v1.35 shipped:
 
@@ -3130,9 +3167,9 @@ These are binding. The frontend must not recompute or reinterpret them.
 | `last_night` | **Added v1.26, §8.1 Panel 1.** Sleep/RHR/HRV for the most recent `biometrics` row, plus a value list scoped to the *current device only* (reuses `rhr_baseline`/`hrv_baseline`'s own `_rows_on_current_device` filter — CLAUDE.md rule 5) and a computed `band_possible_from` date (`first_date_on_current_device + (HRV_BASELINE_MIN_DAYS − 1)` days). **Deliberately computes no band** — see the v1.26 amendment for the full reasoning. A null sensor reading stays null (rule 12). **`days_behind` added v1.30** (`as_of - <latest row's date>`) — lets the render layer state which night is shown and flag when the gap exceeds the clamp's normal one-day lag, see the v1.30 amendment. |
 | `session_for_date` | **Added v1.26, §8.1 Panel 2.** The single `sessions` row for a given date (`sessions.date` is unique, §5), narrowed to `session_type`/`purpose`/`prescription`/`done`. No row is `None`, a real state, not an error. |
 | `today_flag` | **Added v1.26, §8.1 Panel 3.** At most one of `{shin, illness, volume_ramp}`, evaluated in that order, first hit wins, `None` if nothing qualifies. Rule 1: `daily.shin > 0` today or yesterday (today first), **NULL is never a hit**. Rule 2: `daily.illness is True` today or yesterday (today first). Rule 3: completed rolling 7-day km (window ending **yesterday**, never today — "never project the current week forward") more than `TODAY_FLAG_VOLUME_RAMP_PCT` (10%, strict `>`) above the preceding completed 7-day window, via `rolling_7d_km`/`ramp_pct`. **Distinct from `ramp_pct`'s own row above**: that compares calendar Mon–Sun weeks (`weekly_km`, §8.2); this compares two trailing 7-day windows (`rolling_7d_km`) — same 10% tolerance, different question, not shared code. **Added v1.27 — rule 3 is suppressed entirely, falling through as a non-match, if either 7-day window contains any date before `UNDERSTATED_VOLUME_CUTOFF` (§7's own v1.7 floor-not-measurement note, same constant `shin_series` already reads).** No caveat, no warning render — see the v1.27 amendment for why a caveated number was rejected. Suppression lifts 2026-08-22, once both windows clear the cutoff. |
-| `recovery` | **Added v1.35.** 0–100, from NOOP's Charge. For night `d`, each input is a z-score against the **prior 30 days on the current device** (`d` itself excluded; rule 5): HRV as `(ln hrv − mean ln hrv) / σ`, RHR and respiration as `(mean − x) / σ` (lower is better), prior-day `strain` as `(mean − x) / σ`, and `sleep_score / 100` as `(x − 0.85) / 0.12` (no baseline). σ = 1.253 × max(mean absolute deviation, floor); floors ln-HRV 0.08, RHR 2 bpm, respiration 0.5, strain 1.05. Weights HRV 0.55, RHR 0.20, sleep 0.15, respiration 0.05, prior-day strain 0.05; an absent input drops out and the rest renormalize. Composite z → `100 / (1 + e^(−1.6 (z + 0.2)))`, so z = 0 reads ≈ 58%. **HRV is required:** fewer than 4 prior HRV nights returns insufficient-data (rendered as *calibrating n/4*); ≥ 14 is `trusted`. Bands: < 34 red, 34–67 yellow, ≥ 67 green. Output carries the per-input z and the weight actually applied after renormalization, for the contributors panel. |
+| `recovery` | **Added v1.35.** 0–100, from NOOP's Charge. For night `d`, each input is a z-score against the **prior 30 days on the current device** (`d` itself excluded; rule 5): HRV as `(ln hrv − mean ln hrv) / σ`, RHR and respiration as `(mean − x) / σ` (lower is better), prior-day `strain` as `(mean − x) / σ`, and — **v1.37** — `sleep_score.behavioural_score` (the night without its HRV/RHR parts, so neither counts twice) as `(x − mean) / σ` against **every prior night's** behavioural score on the current device, spread floor 5 points; absent below 4 prior nights. σ = 1.253 × max(mean absolute deviation, floor); floors ln-HRV 0.08, RHR 2 bpm, respiration 0.5, strain 1.05. Weights HRV 0.55, RHR 0.20, sleep 0.15, respiration 0.05, prior-day strain 0.05; an absent input drops out and the rest renormalize. Composite z → `100 / (1 + e^(−1.6 (z + 0.2)))`, so z = 0 reads ≈ 58%. **HRV is required:** fewer than 4 prior HRV nights returns insufficient-data (rendered as *calibrating n/4*); ≥ 14 is `trusted`. Bands: < 34 red, 34–67 yellow, ≥ 67 green. Output carries the per-input z and the weight actually applied after renormalization, for the contributors panel. |
 | `strain` | **Added v1.35, method changed v1.36.** 0–21, from NOOP's Effort with its Banister TRIMP option (Morton, Fitz-Clarke & Banister 1990). `x = clamp((hr − rhr_d) / (201 − rhr_d), 0, 1)`, `rhr_d` that day's `biometrics.rhr`. Per-minute rate `max(x · 0.64 · e^(1.92x) − F, 0)`, sedentary floor `F` = the rate at x = 0.20 (= 0.18792/min) — ordinary sitting nets to zero, daily movement counts (v1.36 amendment for why 0.20). TRIMP = Σ rate × minutes to the next sample, gap capped at 10 s inside an activity stream and 120 s on the all-day series (a longer gap is non-wear, not load). Each activity with an `activity_hr` stream is scored on that stream over `[start_ts, start_ts + duration_s)`; every all-day sample outside those windows is scored on the 2-minute series, so no minute counts twice. An activity without a stream falls back on the all-day series. `strain = 21 × ln(TRIMP + 1) / ln(D)`, `D = 1440 · (0.64 · e^1.92 − F) + 1 = 6016.59`, so a theoretical 24 h at 100% HRR maps to 21. Output also carries `activity_share` = activity-stream TRIMP / day TRIMP (`None` on a zero-load day). **All activity types count, cycling included** — this is cardiovascular load; rule 6 binds `weekly_km` only. No `hr_daily` row, or a null `rhr`, is insufficient-data, never 0. On an `is_partial` day the value is today-so-far and is labelled as such (§8.1). |
-| `sleep_score` | **Added v1.35.** 0–100, from NOOP's Rest. Weighted mean of: **duration** `min(1, asleep / need)` 0.50; **efficiency** `asleep / (asleep + awake)` 0.20; **restorative** `min(1, ((deep + rem) / asleep) / 0.50) × f`, `f = 0.5 + 0.5 × min(1, (deep / asleep) / 0.13)` 0.20; **consistency** 0.10 = `1 − SD / 90 min` clamped to [0, 1], SD the mean of the population SDs of bed and wake clock times (minutes after noon, so midnight doesn't wrap) over the 7 nights ending `d`, needing ≥ 3 nights with a recorded window. An absent part drops and the weights renormalize. **Need** = 75th percentile of the prior 30 nights' sleep, floored at 8 h (adult target) and capped at 9.5 h; fewer than 7 nights → 8 h. No sleep for the night is insufficient-data. |
+| `sleep_score` | **Added v1.35, rebuilt v1.37.** 0–100. Weighted mean of: **duration** `min(1, asleep / need)` 0.35; **deep** 0.10, **REM** 0.10 (minutes), **HRV** 0.15 (`ln hrv_overnight`), **RHR** 0.10 (lower is better) — each personal part is z = `(x − mean) / σ` against **every prior night on the current device** (`d` excluded; rule 5 resets it at a device break), σ = 1.253 × max(mean absolute deviation, floor), floors deep/REM 10 min, ln-HRV 0.08, RHR 2 bpm, mapped through Recovery's logistic `1 / (1 + e^(−1.6 (z + 0.2)))` so a night at the athlete's own mean reads ≈ 0.58; absent below 4 prior nights; **efficiency** `asleep / (asleep + awake)` 0.10; **consistency** 0.10 = `1 − SD / 90 min` clamped to [0, 1], SD the mean of the population SDs of bed and wake clock times (minutes after noon, so midnight doesn't wrap) over the 7 nights ending `d`, needing ≥ 3 nights with a recorded window. An absent part drops and the weights renormalize; output carries each part, the weight actually applied, and tonight's value vs baseline for the four personal parts. Also outputs **`behavioural_score`**: the same mean without HRV and RHR — what Recovery reads. **Need** = 75th percentile of the prior 30 nights' sleep, floored at 8 h (adult target) and capped at 9.5 h; fewer than 7 nights → 8 h. No sleep for the night is insufficient-data. |
 | `score_series`, `range_stats` | **Added v1.35.** `score_series` computes `strain` for every date first, then `sleep_score` and `recovery` per date (recovery reads the prior day's strain). `range_stats` returns mean/min/max/n over a range and `delta` = that mean minus the mean of the equal-length window immediately before it (`None` if that window is empty) — §9's per-range mean and delta, computed here, never in the frontend. |
 
 **Added v1.7 — floor, not measurement, for any range ending before
@@ -3209,8 +3246,9 @@ returns to Today. State, not routes.
   carries none); **latest day** split into activity load vs rest-of-day
   load (`strain.activity_share`, computed in §7), listing that day's activities.
 - **Sleep:** hero sphere with asleep, need and the bed → wake window;
-  the four parts (duration, efficiency, restorative, consistency) as tiles
-  with value and weight, an absent part labelled as such; stage
+  the seven parts (duration, deep, REM, HRV, RHR, efficiency, consistency —
+  v1.37) as tiles with value and applied weight from `scores.json`, the
+  personal parts also showing tonight vs usual, an absent part labelled as such; stage
   durations (deep / REM / light / awake) as bars; range selector and trend.
   No hypnogram — per-epoch stages are not ingested.
 
@@ -3562,6 +3600,7 @@ about a session, and fill-vs-hollow carries it without colour.
 | **2** | 17 Aug — Meso 1 boundary | Port `sessions`/`weekly`/`benchmarks` from Airtable. `easy_band_compliance`/`medio_control` additionally need Phase 1.5 before they render against real data — classifying a run as easy/medio is a `sessions` concern, but the segment data itself comes from `laps`. |
 | **2.5** *(added v1.35)* | 28 Oct 2026 | Recovery / Strain / Sleep scores (§7), migration 009 + ingest of `hr_daily` / `activity_hr` / sleep window, backfill from 8 Aug, `scores.json`, §8.1 Today and score detail pages rebuilt in the §10 v1.35 visual system. |
 | **2.6** *(added v1.36)* | 28 Oct 2026 | Strain on Banister TRIMP (20% sedentary floor); migration 010 (`is_partial`); `sync.py --include-today`; `/api/sync` Worker endpoint and the Today "Sync now" button. |
+| **2.7** *(added v1.37)* | 29 Oct 2026 | Sleep score on personal baselines with HRV/RHR (§7); Recovery's sleep term on `behavioural_score` vs own history. |
 | **3** | +21 days on FR70 | HRV/RHR baselines established, bands become real, autoregulation panel on |
 | **4** | Oct, post-benchmark | Campaign page — trajectory vs floor/target/stretch |
 | **5** | 2027 | Lab unlocks, panel by panel, as each `min_n` is crossed |

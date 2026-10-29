@@ -55,10 +55,18 @@ export interface SleepNight {
   sleep_end_local: string | null
 }
 
+// v1.37: deep / REM / HRV / RHR are judged against the athlete's own
+// FR70 history; `inputs` carries tonight's value and that baseline.
+export type SleepPartKey = 'duration' | 'deep' | 'rem' | 'hrv' | 'rhr' | 'efficiency' | 'consistency'
+
 export interface Sleep {
   date: string
   score: number
-  parts: Partial<Record<'duration' | 'efficiency' | 'restorative' | 'consistency', number>>
+  behavioural_score: number // what Recovery reads: the score without HRV/RHR
+  parts: Partial<Record<SleepPartKey, number>>
+  // weight actually applied after renormalization, sums to 1
+  weights: Partial<Record<SleepPartKey, number>>
+  inputs: Partial<Record<'deep' | 'rem' | 'hrv' | 'rhr', RecoveryInput>>
   need_hours: number
   night: SleepNight | null
 }

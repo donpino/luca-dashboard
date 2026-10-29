@@ -779,13 +779,11 @@ BASELINE_TRUSTED_N = 14  # NOOP minNightsTrust
 MAD_TO_SIGMA = 1.253  # mean absolute deviation -> sigma, normal approximation
 # Spread floors keep a quiet run of nights from shrinking sigma toward zero
 # and making every small wobble a large z (NOOP floorSpread, same units).
-SPREAD_FLOOR = {"ln_hrv": 0.08, "rhr": 2.0, "respiration": 0.5, "strain": 1.05}
+SPREAD_FLOOR = {"ln_hrv": 0.08, "rhr": 2.0, "respiration": 0.5, "strain": 1.05, "sleep": 5.0}
 
 RECOVERY_WEIGHTS = {"hrv": 0.55, "rhr": 0.20, "sleep": 0.15, "respiration": 0.05, "prior_strain": 0.05}
 RECOVERY_LOGISTIC_K = 1.6
 RECOVERY_LOGISTIC_Z0 = -0.20  # z = 0 -> ~58%, WHOOP's published population average
-SLEEP_PERF_CENTER = 0.85
-SLEEP_PERF_SCALE = 0.12
 RECOVERY_RED_MAX = 34.0
 RECOVERY_YELLOW_MAX = 67.0
 
@@ -807,13 +805,25 @@ STRAIN_DENOMINATOR = 1440 * (BANISTER_SCALE * math.exp(BANISTER_B) - SEDENTARY_R
 ALL_DAY_SAMPLE_CAP_S = 120  # Garmin all-day HR cadence; longer gaps are non-wear, not load
 ACTIVITY_SAMPLE_CAP_S = 10  # per-second stream; a longer gap is a dropout
 
-SLEEP_WEIGHTS = {"duration": 0.50, "efficiency": 0.20, "restorative": 0.20, "consistency": 0.10}
+# v1.37: deep, REM, HRV and RHR are judged against the athlete's own
+# history, not population targets — the FR70 reports deep at 20-47% of the
+# night, so the old fixed 13% target saturated nearly every night.
+SLEEP_WEIGHTS = {
+    "duration": 0.35,
+    "deep": 0.10,
+    "rem": 0.10,
+    "hrv": 0.15,
+    "rhr": 0.10,
+    "efficiency": 0.10,
+    "consistency": 0.10,
+}
+# The physiology parts are left out of the copy of the score Recovery reads,
+# so HRV and RHR are not counted twice there (athlete's decision, v1.37).
+SLEEP_PHYSIOLOGY_PARTS = ("hrv", "rhr")
+SLEEP_STAGE_FLOOR_MIN = 10.0  # spread floor for deep / REM minutes
 SLEEP_NEED_FLOOR_H = 8.0  # adult population target (NSF/AASM midpoint)
 SLEEP_NEED_CAP_H = 9.5
 SLEEP_NEED_MIN_NIGHTS = 7
-RESTORATIVE_TARGET = 0.50  # deep+REM share of asleep time for full marks
-DEEP_SHARE_TARGET = 0.13
-DEEP_FLOOR_FACTOR = 0.5
 CONSISTENCY_WINDOW_NIGHTS = 7
 CONSISTENCY_MIN_NIGHTS = 3
 CONSISTENCY_ZERO_AT_MIN = 90.0  # SD of bed/wake clock time at which consistency reaches 0
@@ -949,6 +959,20 @@ def sleep_consistency(window_rows: list[dict]) -> float | None:
     return _clamp01(1 - sd / CONSISTENCY_ZERO_AT_MIN)
 
 
+def _personal_part(value: float, history: list[float], floor: float, higher_is_better: bool = True) -> tuple[float, float] | None:
+    """A sleep part judged against every prior night on the device: z
+    against that history, through Recovery's logistic, so a night at the
+    athlete's own mean reads ~58% and only a better-than-usual one nears
+    100%. None below BASELINE_MIN_N prior nights, so the part drops out."""
+    base = personal_baseline(history, floor)
+    if isinstance(base, InsufficientData):
+        return None
+    z = (value - base["mean"]) / base["sigma"]
+    if not higher_is_better:
+        z = -z
+    return 1 / (1 + math.exp(-RECOVERY_LOGISTIC_K * (z - RECOVERY_LOGISTIC_Z0))), base["mean"]
+
+
 def sleep_score(biometrics: list[dict], d: date) -> dict | InsufficientData:
     by_date = _device_rows_by_date(biometrics, d)
     row = by_date.get(d)
@@ -956,20 +980,47 @@ def sleep_score(biometrics: list[dict], d: date) -> dict | InsufficientData:
         return InsufficientData(reason="no scored sleep for this night")
     tst = row["sleep_total_min"]
     need_h = sleep_need_hours(_prior_window(by_date, d))
+    # v1.37: the whole history on this device, not a 30-day window — the
+    # athlete's choice, so an injury block doesn't become the new normal.
+    history = [by_date[x] for x in sorted(by_date) if x < d]
 
     parts: dict[str, float] = {"duration": _clamp01(tst / (need_h * 60))}
+    # value and baseline per personal part, in display units, for the
+    # contributors panel — the frontend derives nothing (rule 3)
+    inputs: dict[str, dict] = {}
     if row.get("sleep_awake_min") is not None:
         parts["efficiency"] = _clamp01(tst / (tst + row["sleep_awake_min"]))
-    deep, rem = row.get("sleep_deep_min"), row.get("sleep_rem_min")
-    if deep is not None and rem is not None:
-        deep_factor = DEEP_FLOOR_FACTOR + (1 - DEEP_FLOOR_FACTOR) * _clamp01((deep / tst) / DEEP_SHARE_TARGET)
-        parts["restorative"] = _clamp01(((deep + rem) / tst) / RESTORATIVE_TARGET) * deep_factor
+    for key, col, floor, log, higher in (
+        ("deep", "sleep_deep_min", SLEEP_STAGE_FLOOR_MIN, False, True),
+        ("rem", "sleep_rem_min", SLEEP_STAGE_FLOOR_MIN, False, True),
+        ("hrv", "hrv_overnight", SPREAD_FLOOR["ln_hrv"], True, True),
+        ("rhr", "rhr", SPREAD_FLOOR["rhr"], False, False),
+    ):
+        if row.get(col) is None or (log and row[col] <= 0):
+            continue
+        f = math.log if log else float
+        past = [f(r[col]) for r in history if r.get(col) is not None and (not log or r[col] > 0)]
+        part = _personal_part(f(row[col]), past, floor, higher)
+        if part is not None:
+            parts[key] = part[0]
+            inputs[key] = {"value": row[col], "baseline": math.exp(part[1]) if log else part[1]}
     window = [by_date[d - timedelta(days=i)] for i in range(CONSISTENCY_WINDOW_NIGHTS) if d - timedelta(days=i) in by_date]
     consistency = sleep_consistency(window)
     if consistency is not None:
         parts["consistency"] = consistency
 
-    return {"date": d, "score": 100 * _weighted_mean(parts, SLEEP_WEIGHTS), "parts": parts, "need_hours": need_h}
+    behavioural = {k: v for k, v in parts.items() if k not in SLEEP_PHYSIOLOGY_PARTS}
+    total = sum(SLEEP_WEIGHTS[k] for k in parts)
+    return {
+        "date": d,
+        "score": 100 * _weighted_mean(parts, SLEEP_WEIGHTS),
+        # what Recovery reads: the same night without HRV/RHR (v1.37)
+        "behavioural_score": 100 * _weighted_mean(behavioural, SLEEP_WEIGHTS),
+        "parts": parts,
+        "weights": {k: SLEEP_WEIGHTS[k] / total for k in parts},
+        "inputs": inputs,
+        "need_hours": need_h,
+    }
 
 
 # --- recovery -------------------------------------------------------------
@@ -988,6 +1039,7 @@ def recovery(
     d: date,
     sleep: dict | InsufficientData,
     strain_by_date: dict[date, float],
+    sleep_history: dict[date, float] | None = None,
 ) -> dict | InsufficientData:
     """z-score of each input against the prior 30 days on the same device,
     weighted, then squashed through a logistic so z = 0 reads ~58%. HRV is
@@ -1014,8 +1066,13 @@ def recovery(
             z[key] = (base["mean"] - row[col]) / base["sigma"]  # lower is better
             inputs[key] = {"value": row[col], "baseline": base["mean"]}
     if not isinstance(sleep, InsufficientData):
-        z["sleep"] = (sleep["score"] / 100 - SLEEP_PERF_CENTER) / SLEEP_PERF_SCALE
-        inputs["sleep"] = {"value": sleep["score"], "baseline": None}
+        # v1.37: the sleep score without HRV/RHR, against every prior night
+        # on this device — like the sleep parts, not a fixed 85% centre
+        past = [v for x, v in (sleep_history or {}).items() if x < d and x in by_date]
+        base = personal_baseline(past, SPREAD_FLOOR["sleep"])
+        if not isinstance(base, InsufficientData):
+            z["sleep"] = (sleep["behavioural_score"] - base["mean"]) / base["sigma"]
+            inputs["sleep"] = {"value": sleep["behavioural_score"], "baseline": base["mean"]}
     prev = d - timedelta(days=1)
     if prev in strain_by_date:
         prior_strain = [strain_by_date[x] for x in (prev - timedelta(days=i) for i in range(1, BASELINE_WINDOW_DAYS + 1)) if x in strain_by_date]
@@ -1066,9 +1123,14 @@ def score_series(
     strain_values = {d: s["strain"] for d, s in strains.items() if not isinstance(s, InsufficientData)}
 
     out = []
+    sleep_history: dict[date, float] = {}  # behavioural sleep score, for recovery's sleep term
     for d in days:
         sl = sleep_score(biometrics, d)
-        out.append({"date": d, "strain": strains[d], "sleep": sl, "recovery": recovery(biometrics, d, sl, strain_values)})
+        out.append(
+            {"date": d, "strain": strains[d], "sleep": sl, "recovery": recovery(biometrics, d, sl, strain_values, sleep_history)}
+        )
+        if not isinstance(sl, InsufficientData):
+            sleep_history[d] = sl["behavioural_score"]
     return out
 
 

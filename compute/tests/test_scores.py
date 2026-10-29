@@ -1,4 +1,4 @@
-"""recovery, strain, sleep_score — DASHBOARD_SPEC.md §7, v1.35.
+"""recovery, strain, sleep_score — DASHBOARD_SPEC.md §7, v1.35 (sleep v1.37).
 
 Synthetic fixtures; every expected value is worked by hand in the comment
 above its assertion.
@@ -180,24 +180,58 @@ def test_sleep_consistency_hand_checked():
     assert sleep_consistency(rows[:2]) is None
 
 
-def test_sleep_score_without_consistency_renormalizes():
-    # duration 420/480 = 0.875; efficiency 420/450 = 0.93333;
-    # deep share 70/420 = 0.1667 >= 0.13 -> factor 1;
-    # restorative (175/420) / 0.5 = 0.83333. No sleep window -> no
-    # consistency, weights renormalize over 0.9:
-    # (0.5*0.875 + 0.2*0.93333 + 0.2*0.83333) / 0.9 = 0.790833 / 0.9 = 87.87
+def test_sleep_score_without_history_or_window_renormalizes():
+    # No prior nights -> no deep/REM/HRV/RHR part (personal baseline needs
+    # 4) and no consistency. duration 420/480 = 0.875; efficiency
+    # 420/450 = 0.93333. (0.35*0.875 + 0.10*0.93333) / 0.45
+    # = 0.399583 / 0.45 = 88.80
     rows = [_bio(D, sleep_total_min=420, sleep_awake_min=30, sleep_deep_min=70, sleep_rem_min=105)]
     result = sleep_score(rows, D)
     assert result["need_hours"] == 8.0
-    assert "consistency" not in result["parts"]
-    assert result["score"] == pytest.approx(87.87, abs=0.01)
+    assert set(result["parts"]) == {"duration", "efficiency"}
+    assert result["score"] == pytest.approx(88.80, abs=0.01)
+    assert result["behavioural_score"] == pytest.approx(88.80, abs=0.01)
+    assert result["weights"] == pytest.approx({"duration": 0.35 / 0.45, "efficiency": 0.10 / 0.45})
 
 
-def test_sleep_score_low_deep_scales_restorative():
-    # deep 26/420 = 0.0619 -> adequacy 0.4762 -> factor 0.5 + 0.5*0.4762 = 0.7381
-    # restorative = ((26+149)/420 / 0.5) * 0.7381 = 0.83333 * 0.7381 = 0.61508
-    rows = [_bio(D, sleep_total_min=420, sleep_awake_min=30, sleep_deep_min=26, sleep_rem_min=149)]
-    assert sleep_score(rows, D)["parts"]["restorative"] == pytest.approx(0.61508, abs=1e-4)
+def _night(d, **kw):
+    base = dict(sleep_total_min=420, sleep_awake_min=30, sleep_deep_min=100, sleep_rem_min=90, hrv_overnight=50, rhr=48)
+    return _bio(d, **{**base, **kw})
+
+
+def test_sleep_score_night_at_own_mean():
+    # 10 identical prior nights, tonight the same: every personal part has
+    # z = 0 -> 1 / (1 + e^(-1.6 * 0.2)) = 0.579324.
+    # score: 0.35*0.875 + 0.10*0.93333 + (0.10+0.10+0.15+0.10)*0.579324
+    #      = 0.399583 + 0.260696 = 0.660279, / 0.90 = 73.36
+    # behavioural (no HRV/RHR): 0.399583 + 0.20*0.579324 = 0.515448,
+    #      / 0.65 = 79.30
+    rows = [_night(D - timedelta(days=i)) for i in range(1, 11)] + [_night(D)]
+    result = sleep_score(rows, D)
+    for k in ("deep", "rem", "hrv", "rhr"):
+        assert result["parts"][k] == pytest.approx(0.579324, abs=1e-5)
+    assert result["score"] == pytest.approx(73.36, abs=0.01)
+    assert result["behavioural_score"] == pytest.approx(79.30, abs=0.01)
+    assert result["inputs"]["hrv"] == pytest.approx({"value": 50, "baseline": 50})
+
+
+def test_sleep_score_lower_rhr_is_better():
+    # prior RHR all 48 -> MAD 0, floor 2 -> sigma 2.506. Tonight 46:
+    # z = 2 / 2.506 = 0.798085 -> 1 / (1 + e^(-1.6 * 0.998085)) = 0.831590
+    rows = [_night(D - timedelta(days=i)) for i in range(1, 5)] + [_night(D, rhr=46)]
+    assert sleep_score(rows, D)["parts"]["rhr"] == pytest.approx(0.831590, abs=1e-5)
+
+
+def test_sleep_score_baseline_is_whole_device_history():
+    # v1.37: the four FR70 nights 35-38 days back sit outside a 30-day
+    # window but still count, so deep has a baseline (z = 0 -> 0.579324).
+    # The Amazfit nights before them are a different sensor (rule 5): were
+    # they included, mean deep would be 200 and tonight would read low.
+    amazfit = [_night(D - timedelta(days=i), device="amazfit", sleep_deep_min=300) for i in range(40, 50)]
+    fr70 = [_night(D - timedelta(days=i)) for i in range(35, 39)]
+    result = sleep_score(amazfit + fr70 + [_night(D)], D)
+    assert result["parts"]["deep"] == pytest.approx(0.579324, abs=1e-5)
+    assert result["inputs"]["deep"]["baseline"] == 100
 
 
 def test_sleep_score_null_sleep_is_insufficient():
@@ -242,3 +276,22 @@ def test_recovery_reports_inputs_against_baseline():
     assert result["inputs"]["rhr"] == {"value": 46, "baseline": 48}
     assert result["inputs"]["hrv"]["baseline"] == pytest.approx(50)
     assert result["weights"] == pytest.approx({"hrv": 0.55 / 0.75, "rhr": 0.20 / 0.75})
+
+
+def test_recovery_sleep_term_is_against_own_sleep_history():
+    # v1.37. Prior behavioural sleep scores 70, 72, 68, 70 -> mean 70,
+    # MAD 1.0 below the 5-point floor -> sigma 1.253 * 5 = 6.265.
+    # Tonight 76.265 -> z = 6.265 / 6.265 = 1.0 exactly.
+    rows = _flat_history(hrv_overnight=50, rhr=48)
+    history = {D - timedelta(days=i): v for i, v in zip(range(1, 5), (70, 72, 68, 70))}
+    sleep = {"score": 60.0, "behavioural_score": 76.265}
+    result = recovery(rows, D, sleep, {}, history)
+    assert result["z"]["sleep"] == pytest.approx(1.0, abs=1e-6)
+    assert result["inputs"]["sleep"] == {"value": 76.265, "baseline": 70}
+
+
+def test_recovery_sleep_term_absent_below_four_prior_scores():
+    rows = _flat_history(hrv_overnight=50, rhr=48)
+    sleep = {"score": 60.0, "behavioural_score": 76.0}
+    result = recovery(rows, D, sleep, {}, {D - timedelta(days=1): 70})
+    assert "sleep" not in result["z"]

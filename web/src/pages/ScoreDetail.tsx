@@ -138,7 +138,9 @@ function RecoveryPage({ data, onBack }: { data: ScoresResponse; onBack: () => vo
                     <span className="contrib__val">{fmtInput(k, inp.value)}</span>
                   </div>
                   <span className="contrib__base">
-                    {inp.baseline !== null ? `30-day baseline ${fmtInput(k, inp.baseline)}` : 'Last night’s sleep score'}
+                    {k === 'sleep'
+                      ? `Sleep without HRV / RHR · your usual ${fmtInput(k, inp.baseline)}`
+                      : `30-day baseline ${fmtInput(k, inp.baseline)}`}
                   </span>
                   <span className="bar">
                     <span className="bar__fill" style={{ width: `${w * 100}%`, background: INPUT_COLOR[k] }} />
@@ -244,11 +246,17 @@ function StrainPage({ data, onBack }: { data: ScoresResponse; onBack: () => void
 // --- Sleep ------------------------------------------------------------------
 
 const PARTS = [
-  { key: 'duration', label: 'HOURS VS NEED', weight: '50%', color: COLOR.accent },
-  { key: 'efficiency', label: 'EFFICIENCY', weight: '20%', color: COLOR.green },
-  { key: 'restorative', label: 'RESTORATIVE', weight: '20%', color: COLOR.violet },
-  { key: 'consistency', label: 'CONSISTENCY', weight: '10%', color: '#2BB8A6' },
+  { key: 'duration', label: 'HOURS VS NEED', color: COLOR.accent },
+  { key: 'deep', label: 'DEEP', color: COLOR.strain },
+  { key: 'rem', label: 'REM', color: COLOR.violet },
+  { key: 'hrv', label: 'HRV', color: COLOR.strain },
+  { key: 'rhr', label: 'RESTING HR', color: COLOR.rhr },
+  { key: 'efficiency', label: 'EFFICIENCY', color: COLOR.green },
+  { key: 'consistency', label: 'CONSISTENCY', color: '#2BB8A6' },
 ] as const
+
+// unit for a personal part's "you vs your usual" line
+const PART_UNIT = { deep: ' min', rem: ' min', hrv: ' ms', rhr: ' bpm' } as const
 
 function SleepPage({ data, onBack }: { data: ScoresResponse; onBack: () => void }) {
   const s = data.sleep
@@ -283,16 +291,26 @@ function SleepPage({ data, onBack }: { data: ScoresResponse; onBack: () => void 
           <div className="tiles">
             {PARTS.map((p) => {
               const v = s.parts[p.key]
+              const w = s.weights[p.key]
+              const inp = p.key in PART_UNIT ? s.inputs[p.key as keyof typeof PART_UNIT] : undefined
+              const unit = p.key in PART_UNIT ? PART_UNIT[p.key as keyof typeof PART_UNIT] : ''
               return (
                 <div key={p.key} className="card tile">
                   <div className="tile__head">
                     <span className="label">{p.label}</span>
-                    <span className="note">{p.weight}</span>
+                    {w !== undefined && <span className="note">{fmtPct(w)}</span>}
                   </div>
                   <span className="tile__value" style={{ color: v === undefined ? undefined : p.color }}>
                     {v === undefined ? '—' : fmtPct(v)}
                   </span>
                   {v === undefined && <span className="row__sub">Not enough nights yet</span>}
+                  {inp && (
+                    <span className="row__sub">
+                      {Math.round(inp.value)}
+                      {unit} · usual {Math.round(inp.baseline ?? 0)}
+                      {unit}
+                    </span>
+                  )}
                 </div>
               )
             })}
