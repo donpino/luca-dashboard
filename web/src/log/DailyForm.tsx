@@ -32,7 +32,6 @@ function rowToFormState(row: DailyRow): DailyFormState {
     injured: row.injured ?? false,
     travelling: row.travelling ?? false,
     melatonin: row.melatonin ?? false,
-    screens_before_bed: row.screens_before_bed ?? false,
     reading_in_bed: row.reading_in_bed ?? false,
     nasal_strips: row.nasal_strips ?? false,
     cold_shower: row.cold_shower ?? false,
@@ -168,7 +167,7 @@ export default function DailyForm() {
       <div className="group">
         <GroupHeader label="Sleep setup" />
         <ToggleRow
-          label="Phone in bed"
+          label="Phone / screens before bed"
           checked={formState.device_in_bed}
           onChange={(v) => setField('device_in_bed', v)}
         />
@@ -176,11 +175,6 @@ export default function DailyForm() {
           label="Cold room"
           checked={formState.cold_room}
           onChange={(v) => setField('cold_room', v)}
-        />
-        <ToggleRow
-          label="Screens before bed"
-          checked={formState.screens_before_bed}
-          onChange={(v) => setField('screens_before_bed', v)}
         />
         <ToggleRow
           label="Reading in bed"

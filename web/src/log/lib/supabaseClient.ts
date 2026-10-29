@@ -40,7 +40,6 @@ export interface DailyRow {
   injured: boolean | null
   travelling: boolean | null
   melatonin: boolean | null
-  screens_before_bed: boolean | null
   reading_in_bed: boolean | null
   nasal_strips: boolean | null
   cold_shower: boolean | null

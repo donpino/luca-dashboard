@@ -1,4 +1,4 @@
-# Training Dashboard — Build Spec v1.39
+# Training Dashboard — Build Spec v1.40
 
 **Athlete:** Luca · **Campaign:** middle-distance, Foundation block → 2032
 **Status:** Phase 1 complete — `daily` table, RLS/grants, `/log`,
@@ -2407,6 +2407,16 @@ activity in the same day still writes normally, `indoor_cardio` resolves
 to `'other'`, and a `TYPE_MAP` value-set assertion guards against a
 future typo landing outside `{'running', 'cycling', 'other'}`.
 
+**Amendments in v1.40 (29 Oct 2026)** — asked for by the athlete the
+day v1.37–v1.39 shipped.
+
+- **One question, not two (§5, §6, §8.5).** The athlete treats Garmin's
+  *Screens Before Bed* and `/log`'s phone-in-bed as the same thing.
+  Migration 012 folds v1.38's `screens_before_bed` into `device_in_bed`
+  under the v1.38 merge rule (a yes from either counts; a no only fills a
+  NULL) and drops the column; `sync.py` maps the Garmin behaviour to
+  `device_in_bed`; the `/log` toggle reads "Phone / screens before bed".
+
 **Amendments in v1.39 (29 Oct 2026)** — day navigation, asked for by the
 athlete on 28 Oct and designed with them on 29 Oct.
 
@@ -2446,11 +2456,11 @@ behaviour `/log` didn't have.
 - **Mapping (§5):** Alcohol → `alcohol`, Late Meals → `late_meal`,
   Stretching → `stretching`, Illness → `illness`; new columns
   `melatonin`, `injured`, `cold_shower`, `nasal_strips`, `travelling`,
-  `journaling`, `reading_in_bed`, `screens_before_bed` (migration 011).
+  `journaling`, `reading_in_bed` (migration 011).
   Matched by behaviour **name**, not id — the athlete's custom Melatonin
   behaviour has an account-specific id. An unlisted name is skipped and
-  named in the log, never guessed. *Screens Before Bed* is kept separate
-  from `device_in_bed` (phone in bed): related, not the same question.
+  named in the log, never guessed. *Screens Before Bed* → `device_in_bed`
+  (v1.40; v1.38 briefly gave it its own column).
   Garmin's alcohol quantity is not stored — `alcohol` stays "any amount".
 - **Merge rule (§6): a yes from either source counts.** Garmin YES sets
   the column true; Garmin NO fills it only while it is NULL, so it never
@@ -2807,13 +2817,13 @@ failed", while the scheduled sync is unaffected. Renewal steps: RUNBOOK §8.
 | `protein_breakfast` | bool | the named fuelling gap |
 | `alcohol` | bool | **ticked = any alcohol consumed.** No ambiguity. `alcohol`, `late_meal`, `stretching` are also written from Garmin's lifestyle log — merge rule in §6 (v1.38). |
 | `late_meal` | bool | |
-| `device_in_bed` | bool | ticked = phone in bed |
+| `device_in_bed` | bool | ticked = phone or screens in bed / before sleep. Also Garmin's *Screens Before Bed* (v1.40, migration 012 — the athlete treats them as one question). |
 | `cold_room` | bool | |
 | `breathing_exercises` | bool | |
 | `stretching` | bool | recovery habit — **not** logged as a shin measure |
 | `illness` | bool | only habit with an unambiguous effect in prior data. Also written from Garmin's lifestyle log (v1.38). |
 | `injured`, `travelling` | bool | **v1.38, migration 011**, from Garmin's lifestyle log (Injured, Traveling/Vacation); same-day states like `illness` |
-| `melatonin`, `screens_before_bed`, `reading_in_bed`, `nasal_strips`, `cold_shower`, `journaling` | bool | **v1.38, migration 011**, from Garmin's lifestyle log; habits (date + 1 join). `journaling` is the habit, distinct from the `journal` text |
+| `melatonin`, `reading_in_bed`, `nasal_strips`, `cold_shower`, `journaling` | bool | **v1.38, migration 011**, from Garmin's lifestyle log; habits (date + 1 join). `journaling` is the habit, distinct from the `journal` text |
 | `study_hours` | numeric, nullable | captured now, rendered ~2027. Untouched submits `NULL`; `0` is a real value in term time. |
 | `journal` | text | prompt (v1.9, superseded — see below): *"What might affect tonight's sleep?"* |
 
@@ -3525,7 +3535,7 @@ tap gets filled for two weeks and then never again.
 | 1 | Date header | `date` | Defaults to today, **except before 04:00 local, when it defaults to yesterday.** Future dates are rejected silently — native `max` on the date input plus a guard in code — not with an error message; there is nothing to explain to the athlete about a date the picker never should have offered. |
 | 2 | **Status** | `shin` 0–3, `illness`, `injured`, `travelling` | Four buttons, one row, ≥64 px, no default selection. Selected state readable without colour. Both fields gate interpretation of everything else — neither is a habit. |
 | 3 | **Fuelling** | `creatine`, `protein_breakfast`, `alcohol`, `late_meal` | `alcohol` labelled "any amount". |
-| 4 | **Sleep setup** | `device_in_bed`, `cold_room`, `screens_before_bed`, `reading_in_bed`, `nasal_strips`, `melatonin` | v1.38's Garmin behaviours arrive pre-filled once synced. |
+| 4 | **Sleep setup** | `device_in_bed` ("Phone / screens before bed"), `cold_room`, `reading_in_bed`, `nasal_strips`, `melatonin` | v1.38's Garmin behaviours arrive pre-filled once synced. |
 | 5 | **Recovery work** | `breathing_exercises`, `stretching`, `cold_shower`, `journaling` | `stretching` is a recovery habit, **not** a shin measure. |
 | 6 | **Study** | `study_hours` | Stepper, ±0.5, no numeric keyboard. Untouched = `NULL`. The field can be cleared back to untouched at any time — a `Clear` control, same null-vs-zero stakes as `shin` (§5): `0` is a real value once touched, never a placeholder for unanswered, and one accidental tap must not be able to turn an unlogged day into a permanent `0`. |
 | 7 | **Journal** | `journal` | Prompt is the label: *"What might affect tonight's sleep?"* (v1.9 — see §5's temporal semantics note; replaces the original, tense-ambiguous prompt). One line high, grows on focus. Optional. |

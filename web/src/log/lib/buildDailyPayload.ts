@@ -17,7 +17,6 @@ export interface DailyFormState {
   injured: boolean
   travelling: boolean
   melatonin: boolean
-  screens_before_bed: boolean
   reading_in_bed: boolean
   nasal_strips: boolean
   cold_shower: boolean
@@ -43,7 +42,6 @@ export interface DailyPayload {
   injured: boolean
   travelling: boolean
   melatonin: boolean
-  screens_before_bed: boolean
   reading_in_bed: boolean
   nasal_strips: boolean
   cold_shower: boolean
@@ -66,7 +64,6 @@ export const emptyFormState: DailyFormState = {
   injured: false,
   travelling: false,
   melatonin: false,
-  screens_before_bed: false,
   reading_in_bed: false,
   nasal_strips: false,
   cold_shower: false,
@@ -106,7 +103,6 @@ export function buildDailyPayload(state: DailyFormState, date: string): DailyPay
     injured: state.injured,
     travelling: state.travelling,
     melatonin: state.melatonin,
-    screens_before_bed: state.screens_before_bed,
     reading_in_bed: state.reading_in_bed,
     nasal_strips: state.nasal_strips,
     cold_shower: state.cold_shower,

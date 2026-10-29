@@ -284,3 +284,10 @@ def test_sync_lifestyle_writes_no_row_for_an_unlogged_day():
     client = SimpleNamespace(get_lifestyle_logging_data=lambda ds: _report(alcohol=None))
     sync_lifestyle(client, db, date(2026, 10, 29))
     assert db.table("daily").rows == {}
+
+
+def test_screens_before_bed_feeds_device_in_bed():
+    # v1.40: the athlete treats Garmin's Screens Before Bed and /log's
+    # "phone in bed" as one question
+    answers = lifestyle_answers({"dailyLogsReport": [{"name": "Screens Before Bed", "logStatus": "YES"}]})
+    assert answers == {"device_in_bed": True}

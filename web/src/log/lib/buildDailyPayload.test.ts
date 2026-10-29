@@ -65,7 +65,7 @@ describe('buildDailyPayload', () => {
     expect(payload.journal).toBe('hello')
   })
 
-  it('emits all seventeen booleans as explicit booleans', () => {
+  it('emits all sixteen booleans as explicit booleans', () => {
     const payload = buildDailyPayload(validState, '2026-08-08')
     const booleanKeys: (keyof typeof payload)[] = [
       'illness',
@@ -80,7 +80,6 @@ describe('buildDailyPayload', () => {
       'injured',
       'travelling',
       'melatonin',
-      'screens_before_bed',
       'reading_in_bed',
       'nasal_strips',
       'cold_shower',

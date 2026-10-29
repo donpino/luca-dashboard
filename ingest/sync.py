@@ -404,7 +404,8 @@ LIFESTYLE_MAP = {
     "traveling/vacation": "travelling",
     "journaling": "journaling",
     "reading in bed": "reading_in_bed",
-    "screens before bed": "screens_before_bed",
+    # the athlete treats this and /log's "phone in bed" as one question (v1.40)
+    "screens before bed": "device_in_bed",
 }
 LIFESTYLE_COLUMNS = sorted(set(LIFESTYLE_MAP.values()))
 
