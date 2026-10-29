@@ -22,7 +22,7 @@ import { INPUT_LABEL, fmtClock, fmtDay, fmtInput, fmtMinutes, fmtPct, fmtScore, 
 const fmtScoreN = (v: number | null) => fmtScore(v)
 const fmtStrainN = (v: number | null) => fmtStrain(v)
 
-function Shell({ kind, title, sub, onBack, children }: { kind: ScoreKey; title: string; sub: string; onBack: () => void; children: ReactNode }) {
+export function Shell({ kind, title, sub, onBack, children }: { kind: string; title: string; sub: string; onBack: () => void; children: ReactNode }) {
   return (
     <div className={`screen screen--${kind}`}>
       <button type="button" className="round-btn round-btn--back" onClick={onBack} aria-label="Back to Today">
@@ -39,7 +39,7 @@ function Shell({ kind, title, sub, onBack, children }: { kind: ScoreKey; title: 
   )
 }
 
-function Hero({ level, color, text, children }: { level: number | null; color: string; text: string; children: ReactNode }) {
+export function Hero({ level, color, text, children }: { level: number | null; color: string; text: string; children: ReactNode }) {
   return (
     <section className="card hero">
       <span className="scores__sphere scores__sphere--hero">
@@ -156,7 +156,7 @@ function RecoveryPage({ data, onBack }: { data: ScoresResponse; onBack: () => vo
       )}
 
       <h2 className="section">TREND</h2>
-      <TrendCard data={data} scoreKey="recovery" title="RECOVERY" color={COLOR.green} yMax={100} format={fmtScoreN} />
+      <TrendCard series={data.series} valueKey="recovery" ranges={data.ranges.recovery} rangeOptions={data.range_options} title="RECOVERY" color={COLOR.green} yMax={100} format={fmtScoreN} />
 
       <h2 className="section">CALENDAR</h2>
       <section className="card">
@@ -201,7 +201,7 @@ function StrainPage({ data, onBack }: { data: ScoresResponse; onBack: () => void
   const s = data.strain
   return (
     <Shell kind="strain" title="Strain" sub="Cardiovascular load, 0–21 · all-day HR + activities" onBack={onBack}>
-      <TrendCard data={data} scoreKey="strain" title="STRAIN" color={COLOR.strain} yMax={STRAIN_MAX} format={fmtStrainN} />
+      <TrendCard series={data.series} valueKey="strain" ranges={data.ranges.strain} rangeOptions={data.range_options} title="STRAIN" color={COLOR.strain} yMax={STRAIN_MAX} format={fmtStrainN} />
 
       <h2 className="section">THIS WEEK</h2>
       <section className="card">
@@ -337,7 +337,7 @@ function SleepPage({ data, onBack }: { data: ScoresResponse; onBack: () => void 
       )}
 
       <h2 className="section">TREND</h2>
-      <TrendCard data={data} scoreKey="sleep" title="SLEEP" color={COLOR.sleep} yMax={100} format={fmtScoreN} />
+      <TrendCard series={data.series} valueKey="sleep" ranges={data.ranges.sleep} rangeOptions={data.range_options} title="SLEEP" color={COLOR.sleep} yMax={100} format={fmtScoreN} />
     </Shell>
   )
 }

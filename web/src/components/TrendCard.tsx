@@ -1,35 +1,62 @@
-// One score's trend: range selector (§9), ECharts line on a fixed axis, and
-// MEAN / MIN / MAX / delta from compute's range_stats (§7 v1.35). The series
-// is filtered by date to the selected range — selection, not computation,
-// same as the §8.3 panel (v1.18); the stats are read, never recomputed.
+// One value's trend: range selector (§9), ECharts line, and MEAN / MIN /
+// MAX / delta from compute's range_stats (§7 v1.35). The series is filtered
+// by date to the selected range — selection, not computation, same as the
+// §8.3 panel (v1.18); the stats are read, never recomputed. v1.41: generic
+// over any pre-computed series (scores, and the metric cards' raw values),
+// with an optional reference-band lane (§10) and a free y axis.
 
 import { useEffect, useMemo, useRef, useState } from 'react'
 import * as echarts from 'echarts'
-import type { RangeKey, ScoreKey, ScoresResponse } from '../panels/scores'
+import type { RangeKey, ScoreRange } from '../panels/scores'
 import { fmtDay, fmtDelta, rangeLabel } from '../panels/scoresCopy'
 
+// A series entry: its date and whatever pre-computed fields it carries.
+type Entry = { date: string } & object
+
 interface Props {
-  data: ScoresResponse
-  scoreKey: ScoreKey
+  series: Entry[]
+  valueKey: string
+  ranges: Record<RangeKey, ScoreRange>
+  rangeOptions: RangeKey[]
   title: string
   color: string
-  yMax: number
+  yMax?: number // fixed 0..yMax axis for scores; omitted = fitted to the data
+  bandKey?: string // field holding [low, high] for a reference lane
   format: (v: number | null) => string
 }
 
-function defaultRange(data: ScoresResponse, key: ScoreKey): RangeKey {
-  return data.ranges[key]['30d'].locked ? 'all' : '30d'
-}
+const read = (e: Entry, k: string) => (e as Record<string, unknown>)[k]
 
-export default function TrendCard({ data, scoreKey, title, color, yMax, format }: Props) {
-  const [range, setRange] = useState<RangeKey>(() => defaultRange(data, scoreKey))
+export default function TrendCard({
+  series,
+  valueKey,
+  ranges,
+  rangeOptions,
+  title,
+  color,
+  yMax,
+  bandKey,
+  format,
+}: Props) {
+  const [range, setRange] = useState<RangeKey>(() => (ranges['30d'].locked ? 'all' : '30d'))
   const chartRef = useRef<HTMLDivElement | null>(null)
-  const info = data.ranges[scoreKey][range]
+  const info = ranges[range]
 
+  const inRange = useMemo(() => series.filter((e) => e.date >= info.start), [series, info.start])
   const points = useMemo(
-    () => data.series.filter((e) => e.date >= info.start).map((e) => [e.date, e[scoreKey]] as [string, number | null]),
-    [data, info.start, scoreKey],
+    () => inRange.map((e) => [e.date, (read(e, valueKey) as number | null) ?? null] as [string, number | null]),
+    [inRange, valueKey],
   )
+  // lane = an invisible base at the low edge with the band's width stacked on it
+  const lane = useMemo(() => {
+    if (!bandKey) return null
+    const b = inRange.map((e) => [e.date, (read(e, bandKey) as [number, number] | null) ?? null] as const)
+    if (!b.some(([, v]) => v)) return null
+    return {
+      low: b.map(([d, v]) => [d, v ? v[0] : null]),
+      width: b.map(([d, v]) => [d, v ? v[1] - v[0] : null]),
+    }
+  }, [inRange, bandKey])
   const latest = [...points].reverse().find(([, v]) => v !== null)
 
   useEffect(() => {
@@ -42,14 +69,17 @@ export default function TrendCard({ data, scoreKey, title, color, yMax, format }
       xAxis: {
         type: 'time',
         axisLine: { lineStyle: { color: 'rgba(255,255,255,0.18)' } },
-        axisLabel: { color: '#9AA3AE', fontSize: 11, hideOverlap: true, formatter: '{d} {MMM}' },
+        axisLabel: {
+          color: '#9AA3AE',
+          fontSize: 11,
+          hideOverlap: true,
+          formatter: '{d} {MMM}',
+        },
         splitLine: { show: false },
       },
       yAxis: {
         type: 'value',
-        min: 0,
-        max: yMax,
-        interval: yMax === 21 ? 7 : 25,
+        ...(yMax !== undefined ? { min: 0, max: yMax, interval: yMax === 21 ? 7 : 25 } : { scale: true }),
         axisLabel: { color: '#9AA3AE', fontSize: 10 },
         splitLine: { lineStyle: { color: 'rgba(255,255,255,0.07)' } },
       },
@@ -61,6 +91,29 @@ export default function TrendCard({ data, scoreKey, title, color, yMax, format }
         valueFormatter: (v: unknown) => format(typeof v === 'number' ? v : null),
       },
       series: [
+        ...(lane
+          ? [
+              {
+                type: 'line',
+                data: lane.low,
+                stack: 'lane',
+                symbol: 'none',
+                lineStyle: { opacity: 0 },
+                silent: true,
+                tooltip: { show: false },
+              },
+              {
+                type: 'line',
+                data: lane.width,
+                stack: 'lane',
+                symbol: 'none',
+                silent: true,
+                tooltip: { show: false },
+                lineStyle: { color, opacity: 0.35, width: 1 },
+                areaStyle: { color, opacity: 0.16 },
+              },
+            ]
+          : []),
         {
           type: 'line',
           data: points,
@@ -72,12 +125,15 @@ export default function TrendCard({ data, scoreKey, title, color, yMax, format }
           symbolSize: 7,
           lineStyle: { color, width: 2 },
           itemStyle: { color, borderColor: '#1A1D22', borderWidth: 1.5 },
-          areaStyle: {
-            color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
-              { offset: 0, color: `${color}59` },
-              { offset: 1, color: `${color}00` },
-            ]),
-          },
+          // no gradient under the line when a lane is drawn: one fill per chart
+          areaStyle: lane
+            ? undefined
+            : {
+                color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
+                  { offset: 0, color: `${color}59` },
+                  { offset: 1, color: `${color}00` },
+                ]),
+              },
         },
       ],
     })
@@ -87,15 +143,15 @@ export default function TrendCard({ data, scoreKey, title, color, yMax, format }
       window.removeEventListener('resize', resize)
       chart.dispose()
     }
-  }, [points, color, yMax, format])
+  }, [points, lane, color, yMax, format])
 
   const stats = info.stats
   const delta = stats ? fmtDelta(stats.delta) : null
   return (
     <>
       <div className="seg" role="group" aria-label="Range">
-        {data.range_options.map((rk) => {
-          const r = data.ranges[scoreKey][rk]
+        {rangeOptions.map((rk) => {
+          const r = ranges[rk]
           return (
             <button
               key={rk}
@@ -111,7 +167,7 @@ export default function TrendCard({ data, scoreKey, title, color, yMax, format }
           )
         })}
       </div>
-      {data.range_options.some((rk) => data.ranges[scoreKey][rk].locked) && (
+      {rangeOptions.some((rk) => ranges[rk].locked) && (
         <p className="note">Longer ranges unlock as FR70 history builds.</p>
       )}
       <section className="card trend" aria-label={`${title} trend`}>

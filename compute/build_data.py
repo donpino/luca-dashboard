@@ -386,6 +386,51 @@ def build_scores(db, today: date) -> dict:
     return _scores_payload(_fetch_scores_inputs(db, today), today)
 
 
+# v1.41 metric detail pages (§8.1 "Your cards"): the raw nightly values
+# behind each card, per day on the current device (rule 5 — the series
+# starts at the FR70 break), plus weekly running km per Monday.
+METRIC_KEYS = ("hrv", "rhr", "sleep_min")
+
+
+def _metrics_payload(inputs: dict, today: date) -> dict:
+    biometrics = _as_known_on(inputs["biometrics"], today)
+    activities = _as_known_on(inputs["activities"], today)
+    bio_by_date = {r["date"]: r for r in biometrics}
+    series = []
+    d = SCORES_START
+    while d <= today:
+        row = bio_by_date.get(d.isoformat()) or {}
+        band = rhr_baseline(biometrics, d) if row.get("rhr") is not None else None
+        series.append(
+            {
+                "date": d,
+                "hrv": row.get("hrv_overnight"),
+                "rhr": row.get("rhr"),
+                "sleep_min": row.get("sleep_total_min"),
+                # §10: the RHR reference band renders as a lane — the band
+                # as it stood on each day, never today's band drawn back
+                "rhr_band": None if band is None or isinstance(band, InsufficientData) else band["band"],
+            }
+        )
+        d += timedelta(days=1)
+    weeks = []
+    monday = SCORES_START - timedelta(days=SCORES_START.weekday())
+    while monday <= today:
+        # Monday to `today` for the current week, the full week before it
+        weeks.append({"date": monday, "weekly_km": weekly_km(activities, monday)})
+        monday += timedelta(days=7)
+    return {
+        "as_of": today,
+        "series": series,
+        "weeks": weeks,
+        "ranges": {
+            **{k: _score_ranges(series, k, today) for k in METRIC_KEYS},
+            "weekly_km": _score_ranges(weeks, "weekly_km", today),
+        },
+        "range_options": RANGE_OPTIONS,
+    }
+
+
 def build_days(today_inputs: dict, scores_inputs: dict, today: date) -> dict[date, dict]:
     """v1.39 day navigation: for every scored day before `today`, the
     Today and scores payloads exactly as they would have been built on it.
@@ -393,7 +438,11 @@ def build_days(today_inputs: dict, scores_inputs: dict, today: date) -> dict[dat
     out = {}
     d = SCORES_START
     while d < today:
-        out[d] = {"today": _today_payload(today_inputs, d), "scores": _scores_payload(scores_inputs, d)}
+        out[d] = {
+            "today": _today_payload(today_inputs, d),
+            "scores": _scores_payload(scores_inputs, d),
+            "metrics": _metrics_payload(today_inputs, d),
+        }
         d += timedelta(days=1)
     return out
 
@@ -421,6 +470,10 @@ def main():
     today_out_path = DATA_DIR / "today.json"
     _write_json(today_out_path, today_payload)
     print(f"wrote {today_out_path} — flag: {today_payload['flag']}")
+
+    metrics_payload = _metrics_payload(today_inputs, today)
+    _write_json(DATA_DIR / "metrics.json", metrics_payload)
+    print(f"wrote {DATA_DIR / 'metrics.json'}")
 
     days = build_days(today_inputs, scores_inputs, today)
     for d, payload in days.items():

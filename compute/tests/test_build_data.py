@@ -308,3 +308,32 @@ def test_build_days_shows_each_day_as_it_stood(tmp_path):
     assert d3["scores"]["series"][-1]["date"] == SCORES_START + timedelta(days=3)
     assert d3["scores"]["sleep"]["date"] == SCORES_START + timedelta(days=3)
     _write_json(tmp_path / "d3.json", d3)  # coordinate gate
+
+
+def test_metrics_payload_series_weeks_and_no_later_data():
+    # v1.41: raw nightly values per day from the FR70 break, None on a
+    # night with no row (never 0), weekly km per Monday up to the day.
+    from datetime import timedelta
+
+    from build_data import SCORES_START, _metrics_payload
+
+    bio = [
+        {"date": (SCORES_START + timedelta(days=i)).isoformat(), "device": "fr70", "hrv_overnight": 50,
+         "rhr": 48, "sleep_total_min": 420}
+        for i in (0, 1, 3)
+    ]
+    acts = [
+        {"date": (SCORES_START + timedelta(days=2)).isoformat(), "type": "running", "distance_km": 6.0},
+        {"date": (SCORES_START + timedelta(days=5)).isoformat(), "type": "running", "distance_km": 9.0},
+    ]
+    day = SCORES_START + timedelta(days=3)  # 11 Aug, Tue
+    p = _metrics_payload({"biometrics": bio, "activities": acts}, day)
+    assert [e["hrv"] for e in p["series"]] == [50, 50, None, 50]
+    assert p["series"][2]["sleep_min"] is None
+    # weeks start Mon 3 Aug (the week holding 8 Aug) and Mon 10 Aug; the
+    # 13 Aug run is after `day` and not counted yet
+    assert [(w["date"], w["weekly_km"]) for w in p["weeks"]] == [
+        (date(2026, 8, 3), 0.0),
+        (date(2026, 8, 10), 6.0),
+    ]
+    assert p["ranges"]["rhr"]["all"]["stats"]["n"] == 3

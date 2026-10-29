@@ -1,4 +1,4 @@
-# Training Dashboard — Build Spec v1.40
+# Training Dashboard — Build Spec v1.41
 
 **Athlete:** Luca · **Campaign:** middle-distance, Foundation block → 2032
 **Status:** Phase 1 complete — `daily` table, RLS/grants, `/log`,
@@ -2407,6 +2407,30 @@ activity in the same day still writes normally, `indoor_cardio` resolves
 to `'other'`, and a `TYPE_MAP` value-set assertion guards against a
 future typo landing outside `{'running', 'cycling', 'other'}`.
 
+**Amendments in v1.41 (29 Oct 2026)** — the athlete's two follow-ups to
+v1.40.
+
+- **The slosh becomes a wave (§10).** v1.40 only tilted a fixed surface;
+  the athlete asked that the wave change shape like real liquid. The
+  surface now carries a travelling ripple (pinned to zero where it meets
+  the circle) on top of the resting wave, decaying with the tilt, both
+  settling in ~2.8 s to exactly the resting shape. Drawn per frame in
+  `LiquidSphere.tsx` on the SVG nodes (not CSS, which cannot reshape a
+  path); off under `prefers-reduced-motion`. The page loader's sphere
+  keeps both motions going.
+- **Every card opens its value over time (§8.1).** Tapping HRV, Resting
+  HR, Sleep or Weekly km opens a detail page: last value, and a trend
+  with the §9 range selector and MEAN / MIN / MAX / delta. Shin opens the
+  Block tab, whose chart already is shin over time. The values are the raw
+  nightly readings (`hrv_overnight`, `rhr`, `sleep_total_min`) per day
+  from the FR70 break (rule 5) — a night with no row is a gap, never 0 —
+  and `weekly_km` per Monday (Monday-to-date for the current week); the
+  RHR chart draws its `rhr_baseline` band as a lane **as it stood each
+  day** (§10: reference bands render as lanes; HRV has no band, §7).
+  `build_data.py` writes `metrics.json`, and each `days/<date>.json` gains
+  the same block cut at that day, so a picked day's metric pages end on it
+  too. `TrendCard` becomes generic over any pre-computed series.
+
 **Amendments in v1.40 (29 Oct 2026)** — asked for by the athlete the
 day v1.37–v1.39 shipped.
 
@@ -3333,7 +3357,7 @@ cards below (its history stays in those amendments).
 | Score card | How recovered, how loaded, how slept | Three liquid spheres (§10): **Recovery** (fill = score / 100, colour = band), **Strain** (fill = strain / 21), **Sleep** (fill = score / 100). Each shows its number and opens its detail page. Each is the **latest date that has a value** and states that date when it isn't the most recent synced day — the v1.30 rule that a reading never looks more current than it is. Recovery with insufficient HRV history renders an empty sphere labelled *Calibrating n/4*. |
 | Flag | Anything needing a decision | Unchanged from v1.26/v1.27: at most one of shin → illness → volume ramp, absent when nothing qualifies. Renders as an amber card above the session. |
 | Today's session | What to do | Unchanged data (`session_for_date`): `session_type`, `purpose`, `prescription`. No row renders as plain text saying so. |
-| Your cards | The measured inputs | One row each: **HRV** (last night; once `hrv_baseline` exists, its 7-day vs 30-day mean — §7 defines no HRV band), **Resting HR** (band from `rhr_baseline`), **Sleep** (asleep vs need), **Weekly km** (`weekly_km`, running only, Monday to date), **Shin** (latest answer and its date — never a mean, §7). All pre-computed in `today.json`'s `cards` block. Each row's sphere icon is decorative: a fixed fill in the metric's colour, carrying no value. A card with no data reads "—", never 0. |
+| Your cards | The measured inputs | One row each: **HRV** (last night; once `hrv_baseline` exists, its 7-day vs 30-day mean — §7 defines no HRV band), **Resting HR** (band from `rhr_baseline`), **Sleep** (asleep vs need), **Weekly km** (`weekly_km`, running only, Monday to date), **Shin** (latest answer and its date — never a mean, §7). All pre-computed in `today.json`'s `cards` block. Each row's sphere icon is decorative: a fixed fill in the metric's colour, carrying no value. A card with no data reads "—", never 0. **v1.41:** each card is a button — HRV, Resting HR, Sleep and Weekly km open a detail page with that value over time (`metrics.json`); Shin opens Block. |
 | Tab bar | Navigation | Floating, bottom: Today · Week · Block · Lab (Lab disabled until Phase 5). State, not routes (v1.25). |
 
 **Score detail pages (v1.35)** — opened from a sphere; a back button
@@ -3637,7 +3661,8 @@ Section labels are small caps-style uppercase with wide tracking.
 bottom to the score's level with a gently waved surface, a few bubbles and
 a soft highlight. Used for the three scores; small decorative versions mark
 the metric cards (§8.1), the Week compliance grid and the `/log` shin
-buttons (v1.40). On mount the liquid sloshes and settles in ~2 s (v1.40);
+buttons (v1.40). On mount the liquid tilts and a ripple travels across its
+surface, both settling in ~2.8 s (v1.40, wave v1.41);
 `prefers-reduced-motion` turns that off. The page loader is the same
 sphere, rocking.
 
@@ -3714,6 +3739,7 @@ about a session, and fill-vs-hollow carries it without colour.
 | **2.8** *(added v1.38)* | 29 Oct 2026 | Garmin lifestyle log → `daily` (migration 011, `sync_lifestyle`, `/log` toggles), backfill from 11 Aug. |
 | **2.9** *(added v1.39)* | 29 Oct 2026 | Day picker on Today; per-day `days/<date>.json` from `build_data.py`; detail pages end on the picked day. |
 | **2.10** *(added v1.40)* | 29 Oct 2026 | Screens folded into `device_in_bed` (migration 012); Week, Block and `/log` in the v1.35 system; sphere slosh; page loader, JSON cache and prefetch. |
+| **2.11** *(added v1.41)* | 29 Oct 2026 | Wave-shaped slosh; metric card detail pages (`metrics.json`, RHR lane). |
 | **3** | +21 days on FR70 | HRV/RHR baselines established, bands become real, autoregulation panel on |
 | **4** | Oct, post-benchmark | Campaign page — trajectory vs floor/target/stretch |
 | **5** | 2027 | Lab unlocks, panel by panel, as each `min_n` is crossed |

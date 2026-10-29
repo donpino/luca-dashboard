@@ -16,6 +16,7 @@ import { useDayData } from '../components/useDayData'
 import { flagLabel, flagText } from '../panels/flagCopy'
 import { BAND_COLOR, COLOR, STRAIN_MAX, type ScoreKey, type ScoresResponse } from '../panels/scores'
 import { fmtDay, fmtMinutes, fmtScore, fmtStrain } from '../panels/scoresCopy'
+import type { MetricKey } from '../panels/metrics'
 
 const WEEKDAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
 
@@ -95,9 +96,11 @@ interface TodayProps {
   day: string | null // null = today (live)
   onDay: (day: string | null) => void
   onOpen: (key: ScoreKey) => void
+  onMetric: (key: MetricKey) => void // v1.41: a card opens its detail page
+  onShin: () => void // the shin card opens Block's shin chart
 }
 
-export default function Today({ day, onDay, onOpen }: TodayProps) {
+export default function Today({ day, onDay, onOpen, onMetric, onShin }: TodayProps) {
   const [version, setVersion] = useState(0)
   const [picking, setPicking] = useState(false)
   const reload = useCallback(() => setVersion(Date.now()), [])
@@ -199,25 +202,29 @@ export default function Today({ day, onDay, onOpen }: TodayProps) {
           }
           value={night?.hrv_overnight != null ? `${night.hrv_overnight} ms` : '—'}
           color={COLOR.strain}
+          onOpen={() => onMetric('hrv')}
         />
         <MetricRow
           name="RESTING HR"
           sub={cards.rhr_band ? `Band ${Math.round(cards.rhr_band[0])}–${Math.round(cards.rhr_band[1])}` : 'Band building'}
           value={night?.rhr != null ? `${night.rhr} bpm` : '—'}
           color={COLOR.rhr}
+          onOpen={() => onMetric('rhr')}
         />
         <MetricRow
           name="SLEEP"
           sub={s?.sleep ? `Need ${fmtMinutes(s.sleep.need_hours * 60)}` : 'No scored night'}
           value={fmtMinutes(night?.sleep_total_min)}
           color={COLOR.sleep}
+          onOpen={() => onMetric('sleep_min')}
         />
-        <MetricRow name="WEEKLY KM" sub={`Running only · since ${fmtDay(cards.week_start)}`} value={cards.weekly_km.toFixed(1)} color={COLOR.green} />
+        <MetricRow name="WEEKLY KM" sub={`Running only · since ${fmtDay(cards.week_start)}`} value={cards.weekly_km.toFixed(1)} color={COLOR.green} onOpen={() => onMetric('weekly_km')} />
         <MetricRow
           name="SHIN"
           sub={cards.shin_latest ? `Answered ${fmtDay(cards.shin_latest.date)}` : 'Not answered yet'}
           value={cards.shin_latest ? `${cards.shin_latest.shin} / 3` : '—'}
           color={COLOR.amber}
+          onOpen={onShin}
         />
       </div>
       {night && night.days_behind > 1 && (

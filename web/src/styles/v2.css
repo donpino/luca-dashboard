@@ -839,42 +839,7 @@ body {
   border: 1px dashed #3a414b;
 }
 
-/* ---- v1.40 liquid slosh + page loader ---- */
-
-.sphere__liquid {
-  transform-box: view-box;
-  transform-origin: 50% 50%;
-  animation: slosh 2.2s cubic-bezier(0.37, 0, 0.63, 1) both;
-}
-
-/* damped: each swing about 60% of the last, like a glass set down */
-@keyframes slosh {
-  0% { transform: rotate(0deg); }
-  9% { transform: rotate(-10deg); }
-  22% { transform: rotate(6.5deg); }
-  35% { transform: rotate(-4deg); }
-  48% { transform: rotate(2.4deg); }
-  61% { transform: rotate(-1.4deg); }
-  74% { transform: rotate(0.8deg); }
-  87% { transform: rotate(-0.3deg); }
-  100% { transform: rotate(0deg); }
-}
-
-.sphere__liquid--loading {
-  animation: rock 1.6s ease-in-out infinite alternate;
-}
-
-@keyframes rock {
-  from { transform: rotate(-9deg); }
-  to { transform: rotate(9deg); }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .sphere__liquid,
-  .sphere__liquid--loading {
-    animation: none;
-  }
-}
+/* ---- v1.40 page loader (the slosh itself is drawn in LiquidSphere.tsx) ---- */
 
 .page-loader {
   display: flex;
@@ -1416,4 +1381,28 @@ body {
   padding: 0;
   border: none;
   background: transparent;
+}
+
+/* ---- v1.41 card rows that open a detail page ---- */
+
+.row--button {
+  width: 100%;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.row--button:active {
+  transform: scale(0.99);
+}
+
+.row__chev {
+  flex: none;
+  margin-left: -6px;
+  color: var(--muted);
+}
+
+.screen--metric {
+  background: linear-gradient(180deg, #1d3b66 0, var(--bg) 280px);
 }
