@@ -1,99 +1,54 @@
-// §8.2 — the coach surface. Planned vs actual km, Ramp %, Session
-// compliance grid, and Wellness summary are built (v1.33), reading
-// week.json directly (CLAUDE.md rule 3). Easy-band compliance and Medio
-// control stay EmptyPanels — they need the laps table (Phase 1.5), which
-// does not exist yet. Generate check-in was built in v1.28.
-import { useEffect, useState } from 'react'
+// §8.2 — the coach surface, in the §10 v1.35 visual system since v1.40.
+// Planned vs actual km and Ramp %, the session compliance grid, the
+// wellness summary and Generate check-in read week.json directly
+// (CLAUDE.md rule 3). Easy-band compliance and Medio control need the
+// laps table (Phase 1.5) and say so — an unbuilt panel says it is unbuilt.
+import PageLoader from '../components/PageLoader'
+import { useJson } from '../components/useJson'
 import CheckinPanel from '../panels/CheckinPanel'
 import ComplianceGridPanel from '../panels/ComplianceGridPanel'
-import EmptyPanel from '../panels/EmptyPanel'
 import PlannedActualPanel from '../panels/PlannedActualPanel'
-import RampPanel from '../panels/RampPanel'
 import WellnessPanel from '../panels/WellnessPanel'
+import { fmtDay } from '../panels/scoresCopy'
 import type { WeekResponse } from '../panels/week'
 
-type LoadState =
-  | { status: 'loading' }
-  | { status: 'error' }
-  | { status: 'ready'; data: WeekResponse }
-
-// Shared loading/error shell for the four panels below that need
-// week.json before they can render anything — same copy the check-in
-// panel's own loading/error states already used.
-function DataPanelStatus({
-  title,
-  status,
-}: {
-  title: string
-  status: 'loading' | 'error'
-}) {
-  return (
-    <section className="panel" aria-label={title}>
-      <h2 className="panel__title">{title}</h2>
-      {status === 'loading' ? (
-        <p className="status-text status-text--muted">Loading…</p>
-      ) : (
-        <p className="status-text status-text--error">Couldn&rsquo;t load week.json.</p>
-      )}
-    </section>
-  )
-}
-
 export default function Week() {
-  const [state, setState] = useState<LoadState>({ status: 'loading' })
-
-  useEffect(() => {
-    let cancelled = false
-    fetch('/data/week.json')
-      .then((res) => {
-        if (!res.ok) throw new Error(`week.json: ${res.status}`)
-        return res.json() as Promise<WeekResponse>
-      })
-      .then((data) => {
-        if (!cancelled) setState({ status: 'ready', data })
-      })
-      .catch(() => {
-        if (!cancelled) setState({ status: 'error' })
-      })
-    return () => {
-      cancelled = true
-    }
-  }, [])
+  const state = useJson<WeekResponse>('week.json')
+  const data = state.status === 'ready' ? state.data : null
 
   return (
-    <>
-      <div className="week-grid">
-        {state.status === 'ready' ? (
-          <>
-            <PlannedActualPanel data={state.data} />
-            <RampPanel data={state.data} />
-          </>
-        ) : (
-          <>
-            <DataPanelStatus title="Planned vs actual km" status={state.status} />
-            <DataPanelStatus title="Ramp %" status={state.status} />
-          </>
-        )}
-      </div>
-      {state.status === 'ready' ? (
-        <ComplianceGridPanel data={state.data} />
-      ) : (
-        <DataPanelStatus title="Session compliance grid" status={state.status} />
+    <div className="screen screen--week">
+      <header className="detail-head">
+        <h1 className="detail-head__title">Week</h1>
+        <p className="detail-head__sub">
+          {data ? `${data.week_label ? `${data.week_label} · ` : ''}${fmtDay(data.week_start)} – ${fmtDay(data.week_end)}` : ' '}
+        </p>
+      </header>
+
+      {state.status === 'loading' && <PageLoader />}
+      {state.status === 'error' && <p className="status-text status-text--error">Couldn&rsquo;t load week.json.</p>}
+
+      {data && (
+        <>
+          <h2 className="section">VOLUME</h2>
+          <PlannedActualPanel data={data} />
+
+          <h2 className="section">SESSIONS</h2>
+          <ComplianceGridPanel data={data} />
+
+          <h2 className="section">WELLNESS</h2>
+          <WellnessPanel data={data} />
+
+          <h2 className="section">NOT BUILT YET</h2>
+          <section className="card">
+            <p className="row__name">EASY-BAND COMPLIANCE · MEDIO CONTROL</p>
+            <p className="note">Both need per-lap data, which arrives with the laps table (Phase 1.5).</p>
+          </section>
+
+          <h2 className="section">CHECK-IN</h2>
+          <CheckinPanel data={data} />
+        </>
       )}
-      <div className="week-grid">
-        <EmptyPanel title="Easy-band compliance" />
-        <EmptyPanel title="Medio control" />
-      </div>
-      {state.status === 'ready' ? (
-        <WellnessPanel data={state.data} />
-      ) : (
-        <DataPanelStatus title="Wellness summary" status={state.status} />
-      )}
-      {state.status === 'ready' ? (
-        <CheckinPanel data={state.data} />
-      ) : (
-        <DataPanelStatus title="Generate check-in" status={state.status} />
-      )}
-    </>
+    </div>
   )
 }

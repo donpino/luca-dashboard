@@ -4,6 +4,7 @@
 // glance and jumps straight to a day. Values come from scores.json's
 // `series` as-is; a day without a value has no sphere, never a 0.
 
+import PageLoader from './PageLoader'
 import { useState } from 'react'
 import { BAND_COLOR, COLOR, STRAIN_MAX, type ScoreKey, type ScoresResponse, type SeriesEntry } from '../panels/scores'
 import { fmtScore, fmtStrain } from '../panels/scoresCopy'
@@ -41,7 +42,7 @@ export default function DayPicker({ selected, onPick, onClose }: Props) {
   if (state.status !== 'ready') {
     return (
       <div className="daypick" role="dialog" aria-label="Choose a day">
-        <p className="status-text status-text--muted">{state.status === 'loading' ? 'Loading…' : 'Couldn’t load scores.json.'}</p>
+        {state.status === 'loading' ? <PageLoader /> : <p className="status-text status-text--error">Couldn’t load scores.json.</p>}
       </div>
     )
   }

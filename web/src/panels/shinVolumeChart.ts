@@ -14,11 +14,15 @@ import type { ShinSeriesDay, ShinSeriesResponse } from './shinSeries'
 
 // §10 palette — literal values, not CSS var() strings, because these are
 // consumed by an off-DOM canvas renderer (echarts), not the stylesheet.
-const AZZURRO = '#3E8FD6'
-const TEXT = '#E6EAF0'
-const MUTED = '#8794A6'
-const LINE = '#232B38'
-const SURFACE = '#141922'
+// v1.40: the v1.35 tokens (same as TrendCard), shin in its card colour.
+const AZZURRO = '#5AA2F0'
+const TEXT = '#F2F4F7'
+const MUTED = '#9AA3AE'
+const LINE = 'rgba(255,255,255,0.07)'
+const AXIS = 'rgba(255,255,255,0.18)'
+const SURFACE = '#1A1D22'
+const SHIN = '#D4A017'
+const FONT = "-apple-system, BlinkMacSystemFont, 'SF Pro Text', Inter, 'Segoe UI', Roboto, sans-serif"
 
 // v1.7's binding understated-volume treatment (§8.3), chosen here as a
 // diagonal-hatch fill (an inline SVG tile, not a solid colour) so it
@@ -71,10 +75,10 @@ function understatedVolumeRegions(series: ShinSeriesDay[]): Array<[string, strin
 // the entire encoding, so both states share the same stroke colour.
 function shinItemStyle(band: ShinSeriesDay['band']) {
   if (band === 'in_band') {
-    return { color: TEXT, borderColor: TEXT, borderWidth: 1 }
+    return { color: SHIN, borderColor: SHIN, borderWidth: 1 }
   }
   // out_of_band — hollow: no fill, visible stroke.
-  return { color: 'transparent', borderColor: TEXT, borderWidth: 2 }
+  return { color: 'transparent', borderColor: SHIN, borderWidth: 2 }
 }
 
 // Below this many days in range, a rolling-7-day line spans little more
@@ -202,8 +206,8 @@ export function buildShinVolumeOption(
   return {
     animation: !opts.reducedMotion,
     backgroundColor: 'transparent',
-    textStyle: { fontFamily: 'IBM Plex Mono, ui-monospace, monospace', color: TEXT },
-    grid: { left: 48, right: 48, top: 24, bottom: 40 },
+    textStyle: { fontFamily: FONT, color: TEXT },
+    grid: { left: 40, right: 32, top: 28, bottom: 28 },
     tooltip: {
       trigger: 'axis',
       confine: true,
@@ -211,15 +215,15 @@ export function buildShinVolumeOption(
       borderColor: LINE,
       borderWidth: 1,
       padding: 10,
-      textStyle: { color: TEXT, fontFamily: 'IBM Plex Mono, ui-monospace, monospace', fontSize: 12 },
-      axisPointer: { type: 'line', lineStyle: { color: LINE } },
+      textStyle: { color: TEXT, fontFamily: FONT, fontSize: 12 },
+      axisPointer: { type: 'line', lineStyle: { color: AXIS } },
       formatter: tooltipFormatter(series),
     },
     xAxis: {
       type: 'category',
       data: categories,
-      axisLine: { lineStyle: { color: LINE } },
-      axisLabel: { color: MUTED, formatter: (iso: string) => formatAxisDate(iso, spansMultipleYears) },
+      axisLine: { lineStyle: { color: AXIS } },
+      axisLabel: { color: MUTED, fontSize: 11, hideOverlap: true, formatter: (iso: string) => formatAxisDate(iso, spansMultipleYears) },
       axisTick: { show: false },
     },
     yAxis: [
@@ -231,9 +235,9 @@ export function buildShinVolumeOption(
         // before this label existed).
         type: 'value',
         name: 'km (7d)',
-        nameTextStyle: { color: MUTED },
-        axisLine: { show: true, lineStyle: { color: LINE } },
-        axisLabel: { color: MUTED },
+        nameTextStyle: { color: MUTED, fontSize: 10 },
+        axisLine: { show: false },
+        axisLabel: { color: MUTED, fontSize: 10 },
         splitLine: { lineStyle: { color: LINE } },
       },
       {
@@ -245,9 +249,9 @@ export function buildShinVolumeOption(
         min: 0,
         max: 3,
         interval: 1,
-        nameTextStyle: { color: MUTED },
-        axisLine: { show: true, lineStyle: { color: LINE } },
-        axisLabel: { color: MUTED },
+        nameTextStyle: { color: SHIN, fontSize: 10 },
+        axisLine: { show: false },
+        axisLabel: { color: SHIN, fontSize: 10 },
         splitLine: { show: false },
       },
     ],
@@ -297,7 +301,7 @@ export function buildShinVolumeOption(
         connectNulls: false,
         symbolSize: 9,
         z: 4,
-        lineStyle: { color: MUTED, width: 1 },
+        lineStyle: { color: SHIN, width: 1, opacity: 0.6 },
       },
       {
         id: 'shin-not-answered',

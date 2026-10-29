@@ -2416,6 +2416,31 @@ day v1.37–v1.39 shipped.
   under the v1.38 merge rule (a yes from either counts; a no only fills a
   NULL) and drops the column; `sync.py` maps the Garmin behaviour to
   `device_in_bed`; the `/log` toggle reads "Phone / screens before bed".
+- **Every page in the v1.35 visual system (§8.2, §8.3, §8.5, §10).** The
+  athlete asked that nothing keep the old look. **Week** becomes a
+  `.screen` with VOLUME tiles (actual, planned, ramp), a SESSIONS card
+  whose seven days each show a sphere — full = Yes, half = Partial, empty
+  ring = No, dashed ring = Pending, nothing = No plan, each with its text
+  label, in one colour (red/green stays Recovery's alone) — WELLNESS as
+  card rows, the two laps-blocked panels as one NOT BUILT YET card, and
+  CHECK-IN. **Block**'s shin chart moves to the v1.35 palette: km line
+  in the accent blue, shin markers and axis in amber (the shin card's
+  colour); fill-vs-hollow-vs-hairline is unchanged, so the three states
+  still read without colour. **`/log`** now loads `v2.css` (until v1.40 it
+  deliberately kept the pre-v1.35 look): fields grouped in cards, toggles
+  drawn as switches over the same native checkbox, the four shin buttons
+  each carrying a sphere filled to its value (decorative — the number and
+  word carry the answer, and nothing is pre-selected), a fixed pill Save
+  button. No field, rule or behaviour of the form changes.
+- **The sphere sloshes (§10).** On mount the liquid tilts like a glass
+  nudged on a table and settles in ~2 s (a damped rotation about the
+  sphere's centre, so the surface stays on the circle); off under
+  `prefers-reduced-motion`.
+- **Loading (§9).** Page loads show a gently rocking half-full sphere
+  instead of "Loading…" on black, fading in only after a short beat;
+  every screen eases in; fetched JSON stays in memory for the session and
+  the four tab files are prefetched on launch, so moving between tabs
+  and detail pages is immediate after the first load.
 
 **Amendments in v1.39 (29 Oct 2026)** — day navigation, asked for by the
 athlete on 28 Oct and designed with them on 29 Oct.
@@ -3611,7 +3636,10 @@ Section labels are small caps-style uppercase with wide tracking.
 **Signature element — the liquid sphere.** A dark sphere filled from the
 bottom to the score's level with a gently waved surface, a few bubbles and
 a soft highlight. Used for the three scores; small decorative versions mark
-the metric cards (§8.1). Static — `prefers-reduced-motion` needs nothing.
+the metric cards (§8.1), the Week compliance grid and the `/log` shin
+buttons (v1.40). On mount the liquid sloshes and settles in ~2 s (v1.40);
+`prefers-reduced-motion` turns that off. The page loader is the same
+sphere, rocking.
 
 **Score trend charts** (Recovery / Strain / Sleep detail pages) draw a
 filled dot on every day's value over the line and a soft area fill below it.
@@ -3685,6 +3713,7 @@ about a session, and fill-vs-hollow carries it without colour.
 | **2.7** *(added v1.37)* | 29 Oct 2026 | Sleep score on personal baselines with HRV/RHR (§7); Recovery's sleep term on `behavioural_score` vs own history. |
 | **2.8** *(added v1.38)* | 29 Oct 2026 | Garmin lifestyle log → `daily` (migration 011, `sync_lifestyle`, `/log` toggles), backfill from 11 Aug. |
 | **2.9** *(added v1.39)* | 29 Oct 2026 | Day picker on Today; per-day `days/<date>.json` from `build_data.py`; detail pages end on the picked day. |
+| **2.10** *(added v1.40)* | 29 Oct 2026 | Screens folded into `device_in_bed` (migration 012); Week, Block and `/log` in the v1.35 system; sphere slosh; page loader, JSON cache and prefetch. |
 | **3** | +21 days on FR70 | HRV/RHR baselines established, bands become real, autoregulation panel on |
 | **4** | Oct, post-benchmark | Campaign page — trajectory vs floor/target/stretch |
 | **5** | 2027 | Lab unlocks, panel by panel, as each `min_n` is crossed |

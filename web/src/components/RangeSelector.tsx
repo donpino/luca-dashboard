@@ -11,12 +11,12 @@
 import type { RangeKey } from '../panels/shinSeries'
 
 const RANGE_LABELS: Record<RangeKey, string> = {
-  '7d': '7d',
-  '30d': '30d',
-  '90d': '90d',
-  '6m': '6m',
-  '1y': '1y',
-  all: 'all',
+  '7d': '7D',
+  '30d': '30D',
+  '90d': '90D',
+  '6m': '6M',
+  '1y': '1Y',
+  all: 'ALL',
 }
 
 interface RangeSelectorProps {
@@ -27,16 +27,14 @@ interface RangeSelectorProps {
 
 export default function RangeSelector({ options, selected, onSelect }: RangeSelectorProps) {
   return (
-    <div className="range-selector" role="group" aria-label="Date range">
+    <div className="seg" role="group" aria-label="Date range">
       {options.map((key) => {
         const isSelected = key === selected
         return (
           <button
             key={key}
             type="button"
-            className={
-              isSelected ? 'range-selector__btn range-selector__btn--selected' : 'range-selector__btn'
-            }
+            className={isSelected ? 'seg__item seg__item--active' : 'seg__item'}
             aria-pressed={isSelected}
             onClick={() => onSelect(key)}
           >

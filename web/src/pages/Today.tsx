@@ -6,9 +6,11 @@
 // Every number and decision was made in compute/metrics.py (CLAUDE.md
 // rule 3); this page lays it out.
 
+import PageLoader from '../components/PageLoader'
 import { useCallback, useState } from 'react'
 import DayPicker from '../components/DayPicker'
 import LiquidSphere from '../components/LiquidSphere'
+import MetricRow from '../components/MetricRow'
 import SyncButton from '../components/SyncButton'
 import { useDayData } from '../components/useDayData'
 import { flagLabel, flagText } from '../panels/flagCopy'
@@ -89,27 +91,6 @@ function ScoreCard({ scores, latestDay, onOpen }: ScoreCardProps) {
   )
 }
 
-interface RowProps {
-  name: string
-  sub: string
-  value: string
-  color: string
-}
-
-function MetricRow({ name, sub, value, color }: RowProps) {
-  return (
-    <div className="row card">
-      {/* decorative icon, fixed fill — carries no value (§8.1 v1.35) */}
-      <LiquidSphere size={44} level={0.55} color={color} bubbles={false} />
-      <div className="row__text">
-        <span className="row__name">{name}</span>
-        <span className="row__sub">{sub}</span>
-      </div>
-      <span className="row__value">{value}</span>
-    </div>
-  )
-}
-
 interface TodayProps {
   day: string | null // null = today (live)
   onDay: (day: string | null) => void
@@ -129,7 +110,11 @@ export default function Today({ day, onDay, onOpen }: TodayProps) {
   if (picking) return <DayPicker selected={day} onPick={pick} onClose={() => setPicking(false)} />
 
   if (today.status === 'loading' || scores.status === 'loading') {
-    return <p className="status-text status-text--muted">Loading…</p>
+    return (
+      <div className="screen screen--today">
+        <PageLoader />
+      </div>
+    )
   }
   if (today.status === 'error') {
     return <p className="status-text status-text--error">Couldn&rsquo;t load {day ? `the data for ${fmtDay(day)}` : 'today.json'}.</p>

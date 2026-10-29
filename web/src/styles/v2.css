@@ -838,3 +838,582 @@ body {
   border-radius: 13px;
   border: 1px dashed #3a414b;
 }
+
+/* ---- v1.40 liquid slosh + page loader ---- */
+
+.sphere__liquid {
+  transform-box: view-box;
+  transform-origin: 50% 50%;
+  animation: slosh 2.2s cubic-bezier(0.37, 0, 0.63, 1) both;
+}
+
+/* damped: each swing about 60% of the last, like a glass set down */
+@keyframes slosh {
+  0% { transform: rotate(0deg); }
+  9% { transform: rotate(-10deg); }
+  22% { transform: rotate(6.5deg); }
+  35% { transform: rotate(-4deg); }
+  48% { transform: rotate(2.4deg); }
+  61% { transform: rotate(-1.4deg); }
+  74% { transform: rotate(0.8deg); }
+  87% { transform: rotate(-0.3deg); }
+  100% { transform: rotate(0deg); }
+}
+
+.sphere__liquid--loading {
+  animation: rock 1.6s ease-in-out infinite alternate;
+}
+
+@keyframes rock {
+  from { transform: rotate(-9deg); }
+  to { transform: rotate(9deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sphere__liquid,
+  .sphere__liquid--loading {
+    animation: none;
+  }
+}
+
+.page-loader {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  min-height: 60vh;
+  animation: fade-in 0.4s ease both 0.12s; /* a fast load never flashes it */
+}
+
+.page-loader__text {
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.18em;
+  color: var(--muted);
+}
+
+/* every screen eases in instead of snapping onto black */
+.screen {
+  animation: screen-in 0.32s ease-out both;
+}
+
+@keyframes screen-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: none; }
+}
+
+@keyframes fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .screen,
+  .page-loader {
+    animation: none;
+  }
+}
+
+/* ---- v1.40 Week and Block in the v1.35 system ---- */
+
+.screen--week {
+  background: linear-gradient(180deg, #1d4a5e 0, var(--bg) 280px);
+}
+
+.screen--block {
+  background: linear-gradient(180deg, #5a4314 0, var(--bg) 280px);
+}
+
+.tile--wide {
+  grid-column: 1 / -1;
+}
+
+.compliance__days {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.compliance__day {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+}
+
+.compliance__date {
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.compliance__ring {
+  width: 30px;
+  height: 30px;
+  border-radius: 15px;
+  border: 1.5px dashed transparent;
+}
+
+.compliance__day--pending .compliance__ring {
+  border-color: var(--accent);
+}
+
+.compliance__label {
+  font-size: 11px;
+  color: var(--muted);
+  text-align: center;
+}
+
+.compliance__day--no-row .compliance__label {
+  opacity: 0.6;
+}
+
+.checkin {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 14px;
+}
+
+.checkin__text {
+  width: 100%;
+  margin: 0;
+  max-height: 260px;
+  overflow: auto;
+  padding: 14px;
+  border-radius: 16px;
+  background: #0c0e12;
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  color: #c9ced6;
+}
+
+.pill-btn {
+  padding: 10px 22px;
+  border: none;
+  border-radius: 22px;
+  background: var(--accent);
+  color: #0c0e12;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  cursor: pointer;
+}
+
+.pill-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.shin-chart {
+  height: 260px;
+}
+
+.legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+  margin: 10px 0 0;
+  padding: 0;
+  list-style: none;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.legend li {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.legend__swatch {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 5px;
+}
+
+.legend__swatch--line {
+  width: 16px;
+  height: 2px;
+  border-radius: 1px;
+  background: var(--accent);
+}
+
+.legend__swatch--solid {
+  background: var(--amber);
+}
+
+.legend__swatch--hollow {
+  border: 2px solid var(--amber);
+}
+
+.legend__swatch--hairline {
+  border: 1px solid var(--muted);
+}
+
+.legend__swatch--hatch {
+  width: 14px;
+  border-radius: 2px;
+  background: repeating-linear-gradient(135deg, rgba(242, 244, 247, 0.4) 0 1px, transparent 1px 4px);
+}
+
+/* ---- v1.40 /log in the v1.35 system ----
+   Scoped to .screen--log: same markup and class names the /log
+   components always had, re-dressed — no behaviour changes. */
+
+.screen--log {
+  background: linear-gradient(180deg, #5a4314 0, var(--bg) 300px);
+  padding-bottom: 140px; /* room for the sticky save button */
+}
+
+.log-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.log-head__who {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.screen--log .sign-out-btn,
+.screen--log .date-header__yesterday,
+.screen--log .stepper-btn--clear {
+  padding: 8px 14px;
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--text);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+
+.screen--log .date-header {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0;
+}
+
+.screen--log .date-header__title {
+  margin: 0;
+  font-size: 32px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  line-height: 1.1;
+}
+
+.screen--log .date-header__editing {
+  margin: 0;
+  font-size: 13px;
+  color: var(--amber);
+}
+
+.screen--log .date-header__controls {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+
+.screen--log .date-header__input {
+  padding: 8px 12px;
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  background: var(--card);
+  color: var(--text);
+  font: inherit;
+  color-scheme: dark;
+}
+
+.screen--log .group {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0;
+  padding: 16px 18px;
+}
+
+.screen--log .group-header {
+  margin: 0 0 6px;
+  text-transform: uppercase;
+}
+
+.screen--log .shin-row {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.screen--log .shin-btn {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  min-height: 96px;
+  padding: 10px 4px;
+  border: 1.5px solid var(--line);
+  border-radius: 20px;
+  background: #0c0e12;
+  color: var(--text);
+  font: inherit;
+  cursor: pointer;
+}
+
+.screen--log .shin-btn--selected {
+  border-color: var(--amber);
+  background: rgba(212, 160, 23, 0.14);
+}
+
+.screen--log .shin-btn__number {
+  font-size: 17px;
+  font-weight: 700;
+}
+
+.screen--log .shin-btn__word {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.screen--log .toggle-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 48px;
+  padding: 0;
+  border: none;
+  border-top: 1px solid rgba(255, 255, 255, 0.05);
+  cursor: pointer;
+}
+
+.screen--log .group-header + .toggle-row,
+.screen--log .shin-row + .toggle-row {
+  border-top: none;
+}
+
+.screen--log .toggle-row__label {
+  font-size: 16px;
+}
+
+/* the checkbox drawn as a switch; still a native checkbox underneath */
+.screen--log .toggle-row__input {
+  appearance: none;
+  -webkit-appearance: none;
+  position: relative;
+  flex: none;
+  width: 50px;
+  height: 30px;
+  margin: 0;
+  border-radius: 15px;
+  background: #2a2f37;
+  cursor: pointer;
+  transition: background 0.2s ease;
+}
+
+.screen--log .toggle-row__input::after {
+  content: '';
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 24px;
+  height: 24px;
+  border-radius: 12px;
+  background: #f2f4f7;
+  transition: transform 0.2s ease;
+}
+
+.screen--log .toggle-row__input:checked {
+  background: var(--accent); /* not green: red/green is Recovery's alone (§10) */
+}
+
+.screen--log .toggle-row__input:checked::after {
+  transform: translateX(20px);
+}
+
+.screen--log .toggle-row__input:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.screen--log .stepper {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.screen--log .stepper-btn:not(.stepper-btn--clear) {
+  width: 44px;
+  height: 44px;
+  border: none;
+  border-radius: 22px;
+  background: rgba(255, 255, 255, 0.12);
+  color: var(--text);
+  font-size: 22px;
+  cursor: pointer;
+}
+
+.screen--log .stepper__value {
+  min-width: 64px;
+  text-align: center;
+  font-size: 22px;
+  font-weight: 700;
+}
+
+.screen--log .stepper__value--untouched {
+  color: var(--muted);
+}
+
+.screen--log .journal-field {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.screen--log .journal-field .group-header {
+  letter-spacing: 0.08em;
+  line-height: 1.4;
+}
+
+.screen--log .journal-field__hint {
+  letter-spacing: 0;
+  text-transform: none;
+  font-weight: 400;
+}
+
+.screen--log .journal-field__textarea {
+  width: 100%;
+  min-height: 48px;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: #0c0e12;
+  color: var(--text);
+  font: inherit;
+  font-size: 16px;
+  resize: none;
+}
+
+.screen--log .sticky-footer {
+  position: fixed;
+  z-index: 10;
+  left: 50%;
+  bottom: max(env(safe-area-inset-bottom), 16px);
+  transform: translateX(-50%);
+  width: min(calc(100% - 32px), 488px);
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
+  padding: 0;
+  border: none;
+  background: transparent;
+}
+
+.screen--log .save-btn {
+  height: 58px;
+  border: none;
+  border-radius: 29px;
+  background: var(--accent);
+  color: #0c0e12;
+  font: inherit;
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.45);
+  cursor: pointer;
+}
+
+.screen--log .save-btn:disabled {
+  background: #2a2f37;
+  color: var(--muted);
+  cursor: default;
+}
+
+.screen--log .sticky-footer .status-text {
+  margin: 0;
+  padding: 8px 14px;
+  border-radius: 14px;
+  background: rgba(26, 29, 34, 0.95);
+  text-align: center;
+}
+
+.screen--log .sign-in-form {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  margin-top: 40px;
+  padding: 22px;
+  border: 1px solid var(--line);
+  border-radius: 26px;
+  background: var(--card);
+}
+
+.screen--log .sign-in-form h1 {
+  margin: 0 0 4px;
+  font-size: 28px;
+}
+
+.screen--log .sign-in-form__field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.screen--log .sign-in-form__input {
+  height: 48px;
+  padding: 0 14px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: #0c0e12;
+  color: var(--text);
+  font: inherit;
+  font-size: 16px;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.screen--log .sign-in-form__submit {
+  height: 52px;
+  margin-top: 6px;
+  border: none;
+  border-radius: 26px;
+  background: var(--accent);
+  color: #0c0e12;
+  font: inherit;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+
+.screen--log .log-form {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.screen--log .date-header {
+  padding: 0;
+  border: none;
+  background: transparent;
+}

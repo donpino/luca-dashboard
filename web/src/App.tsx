@@ -10,13 +10,14 @@
 // anything under src/log/ — see CLAUDE.md and DASHBOARD_SPEC.md §4 on
 // bundle isolation; the Today header's "+" is a plain anchor to /log/ for
 // exactly this reason.
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import Nav, { type Tab } from './components/Nav'
 import Today from './pages/Today'
 import Week from './pages/Week'
 import Block from './pages/Block'
 import ScoreDetail from './pages/ScoreDetail'
 import type { ScoreKey } from './panels/scores'
+import { prefetchJson } from './components/useJson'
 
 export default function App() {
   const [tab, setTab] = useState<Tab>('today')
@@ -24,9 +25,15 @@ export default function App() {
   // v1.39: the day Today and the detail pages show; null = today (live)
   const [day, setDay] = useState<string | null>(null)
 
+  // v1.40: warm every tab's file once, so switching tabs never waits
+  useEffect(() => {
+    for (const f of ['today.json', 'scores.json', 'week.json', 'shin_series.json']) prefetchJson(f)
+  }, [])
+
   const select = (next: Tab) => {
     setDetail(null)
     setTab(next)
+    window.scrollTo(0, 0)
   }
   const open = (key: ScoreKey) => {
     setDetail(key)
@@ -39,18 +46,8 @@ export default function App() {
         <div className="page">
           {tab === 'today' && detail === null && <Today day={day} onDay={setDay} onOpen={open} />}
           {tab === 'today' && detail !== null && <ScoreDetail kind={detail} day={day} onBack={() => setDetail(null)} />}
-          {tab === 'week' && (
-            <div className="screen">
-              <h1 className="detail-head__title">Week</h1>
-              <Week />
-            </div>
-          )}
-          {tab === 'block' && (
-            <div className="screen">
-              <h1 className="detail-head__title">Block</h1>
-              <Block />
-            </div>
-          )}
+          {tab === 'week' && <Week />}
+          {tab === 'block' && <Block />}
         </div>
       </main>
       <Nav active={tab} onSelect={select} />

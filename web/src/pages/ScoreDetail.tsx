@@ -3,6 +3,7 @@
 // measured inputs behind its score (§3.1 v1.35: a score is never a dead
 // end). Every number is read from scores.json (CLAUDE.md rule 3).
 
+import PageLoader from '../components/PageLoader'
 import type { ReactNode } from 'react'
 import LiquidSphere from '../components/LiquidSphere'
 import TrendCard from '../components/TrendCard'
@@ -345,7 +346,12 @@ function SleepPage({ data, onBack }: { data: ScoresResponse; onBack: () => void 
 // payload already ends on that day, so every trend and stat stops there.
 export default function ScoreDetail({ kind, day, onBack }: { kind: ScoreKey; day: string | null; onBack: () => void }) {
   const state = useDayData(day).scores
-  if (state.status === 'loading') return <p className="status-text status-text--muted">Loading…</p>
+  if (state.status === 'loading')
+    return (
+      <div className={`screen screen--${kind}`}>
+        <PageLoader />
+      </div>
+    )
   if (state.status === 'error') return <p className="status-text status-text--error">Couldn&rsquo;t load the scores.</p>
   if (kind === 'recovery') return <RecoveryPage data={state.data} onBack={onBack} />
   if (kind === 'strain') return <StrainPage data={state.data} onBack={onBack} />

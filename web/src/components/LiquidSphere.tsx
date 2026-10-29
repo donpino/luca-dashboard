@@ -2,10 +2,14 @@
 // a waved surface, a few bubbles and a soft highlight. Pure geometry: the
 // level arrives pre-computed (score / 100, strain / 21) from the caller,
 // which reads it straight off scores.json. `level === null` draws the empty
-// sphere used for "calibrating" and "no data". Static — nothing to switch
-// off for prefers-reduced-motion.
+// sphere used for "calibrating" and "no data".
+// v1.40: on mount the liquid sloshes like a glass nudged on a table — a
+// damped tilt about the sphere's centre (so the surface's ends and the
+// arc stay on the circle), settling in ~2 s. Pure CSS (`.sphere__liquid`
+// in v2.css), off under prefers-reduced-motion. `loading` swaps it for an
+// endless gentle rock, for the page loader.
 
-import { useId } from 'react'
+import { useId, useState } from 'react'
 
 interface Props {
   size: number
@@ -13,6 +17,7 @@ interface Props {
   color: string
   label?: string
   bubbles?: boolean
+  loading?: boolean
 }
 
 const R = 48
@@ -37,8 +42,10 @@ function liquidPath(level: number): { body: string; surface: string } {
   }
 }
 
-export default function LiquidSphere({ size, level, color, label, bubbles = true }: Props) {
+export default function LiquidSphere({ size, level, color, label, bubbles = true, loading = false }: Props) {
   const id = useId().replace(/:/g, '')
+  // a small random lag so a row of spheres doesn't slosh in lockstep
+  const [delay] = useState(() => `${Math.round(Math.random() * 140)}ms`)
   const liquid = level === null ? null : liquidPath(level)
   const y0 = level === null ? 0 : C + R - 2 * R * Math.max(0.04, Math.min(0.96, level))
   return (
@@ -63,7 +70,7 @@ export default function LiquidSphere({ size, level, color, label, bubbles = true
       </defs>
       <circle cx={C} cy={C} r={R} fill="#0C0E12" />
       {liquid && (
-        <>
+        <g className={loading ? 'sphere__liquid sphere__liquid--loading' : 'sphere__liquid'} style={{ animationDelay: delay }}>
           <path d={liquid.body} fill={`url(#lq${id})`} />
           <path d={liquid.surface} fill="none" stroke="#fff" strokeOpacity="0.45" strokeWidth="1.2" />
           {bubbles && y0 + 14 < C + R - 6 && (
@@ -72,7 +79,7 @@ export default function LiquidSphere({ size, level, color, label, bubbles = true
               <circle cx="62" cy={Math.min(y0 + 22, C + R - 8)} r="1.1" fill="#fff" fillOpacity="0.35" />
             </>
           )}
-        </>
+        </g>
       )}
       <circle cx={C} cy={C} r={R} fill={`url(#gl${id})`} />
       <circle cx={C} cy={C} r={R - 0.5} fill="none" stroke={color} strokeOpacity="0.35" />

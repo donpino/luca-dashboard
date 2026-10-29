@@ -1,3 +1,5 @@
+import LiquidSphere from '../../components/LiquidSphere'
+
 type ShinValue = 0 | 1 | 2 | 3
 
 const OPTIONS: { value: ShinValue; word: string }[] = [
@@ -28,11 +30,13 @@ export default function ShinSelector({ value, onChange }: Props) {
             aria-pressed={selected}
             onClick={() => onChange(opt.value)}
           >
+            {/* fill rises with the answer: decorative, the number and word carry it */}
+            <LiquidSphere size={34} level={opt.value === 0 ? null : opt.value / 3} color="#D4A017" bubbles={false} />
             <span className="shin-btn__number">
               {opt.value}
               {selected ? ' ✓' : ''}
             </span>
-            <span>{opt.word}</span>
+            <span className="shin-btn__word">{opt.word}</span>
           </button>
         )
       })}

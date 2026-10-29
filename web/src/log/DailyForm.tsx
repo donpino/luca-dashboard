@@ -115,12 +115,12 @@ export default function DailyForm() {
   }
 
   return (
-    <div>
+    <div className="log-form">
       <DateHeader value={selectedDate} onChange={setSelectedDate} isEditing={existingRow !== null} />
 
-      {loadingRow && <p className="status-text status-text--muted">Loading…</p>}
+      {loadingRow && <p className="note">Loading…</p>}
 
-      <div className="group">
+      <section className="card group">
         <GroupHeader label="Status" />
         <ShinSelector value={formState.shin} onChange={(v) => setField('shin', v)} />
         <ToggleRow
@@ -138,9 +138,9 @@ export default function DailyForm() {
           checked={formState.travelling}
           onChange={(v) => setField('travelling', v)}
         />
-      </div>
+      </section>
 
-      <div className="group">
+      <section className="card group">
         <GroupHeader label="Fuelling" />
         <ToggleRow
           label="Creatine"
@@ -162,9 +162,9 @@ export default function DailyForm() {
           checked={formState.late_meal}
           onChange={(v) => setField('late_meal', v)}
         />
-      </div>
+      </section>
 
-      <div className="group">
+      <section className="card group">
         <GroupHeader label="Sleep setup" />
         <ToggleRow
           label="Phone / screens before bed"
@@ -191,9 +191,9 @@ export default function DailyForm() {
           checked={formState.melatonin}
           onChange={(v) => setField('melatonin', v)}
         />
-      </div>
+      </section>
 
-      <div className="group">
+      <section className="card group">
         <GroupHeader label="Recovery work" />
         <ToggleRow
           label="Breathing exercises"
@@ -215,9 +215,9 @@ export default function DailyForm() {
           checked={formState.journaling}
           onChange={(v) => setField('journaling', v)}
         />
-      </div>
+      </section>
 
-      <div className="group">
+      <section className="card group">
         <GroupHeader label="Study" />
         <StudyHoursStepper
           value={formState.study_hours}
@@ -231,11 +231,11 @@ export default function DailyForm() {
             setField('studyHoursTouched', false)
           }}
         />
-      </div>
+      </section>
 
-      <div className="group">
+      <section className="card group">
         <JournalField value={formState.journal} onChange={(v) => setField('journal', v)} />
-      </div>
+      </section>
 
       <SaveFooter
         disabled={formState.shin === null || saveStatus === 'saving'}

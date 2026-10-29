@@ -26,11 +26,10 @@ export default function CheckinPanel({ data }: { data: WeekResponse }) {
   }
 
   return (
-    <section className="panel" aria-label="Generate check-in">
-      <h2 className="panel__title">Generate check-in</h2>
-      <pre className="checkin-block mono">{text}</pre>
-      <button type="button" className="checkin-block__copy-btn" onClick={handleCopy}>
-        {copyState === 'copied' ? 'Copied' : 'Copy'}
+    <section className="card checkin" aria-label="Generate check-in">
+      <pre className="checkin__text mono">{text}</pre>
+      <button type="button" className="pill-btn" onClick={handleCopy}>
+        {copyState === 'copied' ? 'COPIED' : 'COPY'}
       </button>
       {copyState === 'error' && (
         <p className="status-text status-text--error">

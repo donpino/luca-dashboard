@@ -5,6 +5,8 @@ import '@fontsource/ibm-plex-sans/600.css'
 import '@fontsource/ibm-plex-mono/400.css'
 import '@fontsource/ibm-plex-mono/500.css'
 import '../styles/global.css'
+// v1.40: /log joins the v1.35 visual system (previously it kept the old look)
+import '../styles/v2.css'
 import LogPage from './LogPage'
 
 createRoot(document.getElementById('root')!).render(
