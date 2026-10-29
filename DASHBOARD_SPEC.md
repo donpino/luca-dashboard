@@ -1,4 +1,4 @@
-# Training Dashboard — Build Spec v1.43
+# Training Dashboard — Build Spec v1.44
 
 **Athlete:** Luca · **Campaign:** middle-distance, Foundation block → 2032
 **Status:** Phase 1 complete — `daily` table, RLS/grants, `/log`,
@@ -2407,6 +2407,21 @@ activity in the same day still writes normally, `indoor_cardio` resolves
 to `'other'`, and a `TYPE_MAP` value-set assertion guards against a
 future typo landing outside `{'running', 'cycling', 'other'}`.
 
+**Amendments in v1.44 (29 Oct 2026)** — fixes the athlete found on the
+`/log` tab, and the journal prompt brought back in line with §8.5.
+
+- **One knob per switch.** `global.css`'s pre-v1.35 switch drew its knob
+  in `::before`; v1.40's drew another in `::after`, so every toggle showed
+  two overlapping dots. The old one is now suppressed inside `.screen--log`.
+- **Saving never moves the Save button.** The "Saved for …" / error line
+  was in the fixed footer's flow, so it pushed the button up into the
+  card above. It now floats above the button as a toast; the button stays
+  put.
+- **Journal prompt.** The form had drifted to *"What most affected your
+  recovery and sleep today?"* — the tense-ambiguous wording v1.9 replaced.
+  The athlete chose §8.5's *"What might affect tonight's sleep?"*, now
+  shown again; §5's date + 1 join is what that wording protects.
+
 **Amendments in v1.43 (29 Oct 2026)** — Log becomes a tab like the
 others; the athlete wants one app, not a separate page, and saw black
 borders at the sides of `/log` (its old `.page` kept a 16 px side padding
@@ -3783,6 +3798,7 @@ about a session, and fill-vs-hollow carries it without colour.
 | **2.11** *(added v1.41)* | 29 Oct 2026 | Wave-shaped slosh; metric card detail pages (`metrics.json`, RHR lane). |
 | **2.12** *(added v1.42)* | 29 Oct 2026 | Date-only tooltips; Week picker (`weeks/<monday>.json`); Log replaces Lab in the tab bar. |
 | **2.13** *(added v1.43)* | 29 Oct 2026 | Log as a lazy-loaded tab inside the one app; `/log/` opens the app on Log. |
+| **2.14** *(added v1.44)* | 29 Oct 2026 | `/log` switch knob, floating save message, journal prompt per §8.5. |
 | **3** | +21 days on FR70 | HRV/RHR baselines established, bands become real, autoregulation panel on |
 | **4** | Oct, post-benchmark | Campaign page — trajectory vs floor/target/stretch |
 | **5** | 2027 | Lab unlocks, panel by panel, as each `min_n` is crossed |

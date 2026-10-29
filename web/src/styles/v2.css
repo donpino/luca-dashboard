@@ -1427,3 +1427,28 @@ a.tabbar__item {
 .screen--log .sticky-footer {
   bottom: calc(max(env(safe-area-inset-bottom), 16px) + 82px);
 }
+
+/* ---- v1.44 fixes: one knob per switch; a save message never moves Save ---- */
+
+/* global.css draws its own knob in ::before; only the v2 ::after one stays */
+.screen--log .toggle-row__input::before {
+  content: none;
+}
+
+.screen--log .toggle-row__input {
+  border: none;
+}
+
+.screen--log .toggle-row:last-child {
+  border-bottom: none;
+}
+
+/* the message floats above the button as a toast, out of the flow, so the
+   button stays exactly where the thumb expects it */
+.screen--log .sticky-footer .status-text {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: calc(100% + 8px);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.45);
+}

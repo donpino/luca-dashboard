@@ -5,7 +5,9 @@ interface Props {
   onChange: (next: string) => void
 }
 
-const PROMPT = 'What most affected your recovery and sleep today?'
+// DASHBOARD_SPEC.md §8.5 (v1.9): the future tense keeps the row's date the
+// day the behaviour happened — see §5's temporal semantics. Restored v1.44.
+const PROMPT = 'What might affect tonight’s sleep?'
 
 // One line high, grows on focus/content (DASHBOARD_SPEC.md §8.5). Optional
 // — the label carries the literal prompt text, not a generic field name.
