@@ -98,9 +98,10 @@ interface TodayProps {
   onOpen: (key: ScoreKey) => void
   onMetric: (key: MetricKey) => void // v1.41: a card opens its detail page
   onShin: () => void // the shin card opens Block's shin chart
+  onLog: () => void // v1.43: the "+" opens the Log tab
 }
 
-export default function Today({ day, onDay, onOpen, onMetric, onShin }: TodayProps) {
+export default function Today({ day, onDay, onOpen, onMetric, onShin, onLog }: TodayProps) {
   const [version, setVersion] = useState(0)
   const [picking, setPicking] = useState(false)
   const reload = useCallback(() => setVersion(Date.now()), [])
@@ -150,11 +151,11 @@ export default function Today({ day, onDay, onOpen, onMetric, onShin }: TodayPro
         ) : (
           <SyncButton onDone={reload} />
         )}
-        <a className="round-btn" href="/log/" aria-label="Log today">
+        <button type="button" className="round-btn" onClick={onLog} aria-label="Log today">
           <svg width="20" height="20" viewBox="0 0 24 24" aria-hidden="true">
             <path d="M12 5v14M5 12h14" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" />
           </svg>
-        </a>
+        </button>
       </header>
 
       {!day && s?.data_through_ms && (

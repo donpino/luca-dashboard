@@ -1,4 +1,4 @@
-# Training Dashboard — Build Spec v1.42
+# Training Dashboard — Build Spec v1.43
 
 **Athlete:** Luca · **Campaign:** middle-distance, Foundation block → 2032
 **Status:** Phase 1 complete — `daily` table, RLS/grants, `/log`,
@@ -2407,6 +2407,26 @@ activity in the same day still writes normally, `indoor_cardio` resolves
 to `'other'`, and a `TYPE_MAP` value-set assertion guards against a
 future typo landing outside `{'running', 'cycling', 'other'}`.
 
+**Amendments in v1.43 (29 Oct 2026)** — Log becomes a tab like the
+others; the athlete wants one app, not a separate page, and saw black
+borders at the sides of `/log` (its old `.page` kept a 16 px side padding
+the dashboard's own layout removes).
+
+- **The v1.9 single-app merge, done (§4, §8.5).** v1.9 planned one app,
+  one bundle, reasoning that Cloudflare Access (§2 decision 3) leaves no
+  anonymous visitor to keep the write path away from; v1.10 deferred it,
+  and v1.25 restated the split while the nav still linked out. Log is now
+  a state-backed tab in `App.tsx` (still no client router, for v1.25's
+  reason), and the Today header's "+" opens it. What v1.25 protected is
+  kept a different way: `LogPage` — and with it `@supabase/supabase-js`
+  and the publishable key — is a **lazy chunk**, fetched only the first
+  time Log opens, so the dashboard's first load still carries no auth code
+  (checked in the build: only the `LogPage` chunk mentions Supabase).
+  `web/log/index.html` stays as an entry but renders the same `App`
+  opened on Log, so `/log/` keeps working and looks identical. The form
+  itself — fields, null rules, upsert, sign-in — is unchanged; its Save
+  button floats just above the tab bar.
+
 **Amendments in v1.42 (29 Oct 2026)** — three more requests from the
 athlete.
 
@@ -3379,7 +3399,7 @@ cards below (its history stays in those amendments).
 | Flag | Anything needing a decision | Unchanged from v1.26/v1.27: at most one of shin → illness → volume ramp, absent when nothing qualifies. Renders as an amber card above the session. |
 | Today's session | What to do | Unchanged data (`session_for_date`): `session_type`, `purpose`, `prescription`. No row renders as plain text saying so. |
 | Your cards | The measured inputs | One row each: **HRV** (last night; once `hrv_baseline` exists, its 7-day vs 30-day mean — §7 defines no HRV band), **Resting HR** (band from `rhr_baseline`), **Sleep** (asleep vs need), **Weekly km** (`weekly_km`, running only, Monday to date), **Shin** (latest answer and its date — never a mean, §7). All pre-computed in `today.json`'s `cards` block. Each row's sphere icon is decorative: a fixed fill in the metric's colour, carrying no value. A card with no data reads "—", never 0. **v1.41:** each card is a button — HRV, Resting HR, Sleep and Weekly km open a detail page with that value over time (`metrics.json`); Shin opens Block. |
-| Tab bar | Navigation | Floating, bottom: Today · Week · Block · Log. Today/Week/Block are state, not routes (v1.25); Log is a link to `/log/` (v1.42 — it replaced a disabled Lab tab; Lab returns when §8.4 is built). |
+| Tab bar | Navigation | Floating, bottom: Today · Week · Block · Log — all state, not routes (v1.25). Log replaced a disabled Lab tab (v1.42) and became a real tab, loaded lazily (v1.43); Lab returns when §8.4 is built. |
 
 **Score detail pages (v1.35)** — opened from a sphere; a back button
 returns to Today. State, not routes.
@@ -3762,6 +3782,7 @@ about a session, and fill-vs-hollow carries it without colour.
 | **2.10** *(added v1.40)* | 29 Oct 2026 | Screens folded into `device_in_bed` (migration 012); Week, Block and `/log` in the v1.35 system; sphere slosh; page loader, JSON cache and prefetch. |
 | **2.11** *(added v1.41)* | 29 Oct 2026 | Wave-shaped slosh; metric card detail pages (`metrics.json`, RHR lane). |
 | **2.12** *(added v1.42)* | 29 Oct 2026 | Date-only tooltips; Week picker (`weeks/<monday>.json`); Log replaces Lab in the tab bar. |
+| **2.13** *(added v1.43)* | 29 Oct 2026 | Log as a lazy-loaded tab inside the one app; `/log/` opens the app on Log. |
 | **3** | +21 days on FR70 | HRV/RHR baselines established, bands become real, autoregulation panel on |
 | **4** | Oct, post-benchmark | Campaign page — trajectory vs floor/target/stretch |
 | **5** | 2027 | Lab unlocks, panel by panel, as each `min_n` is crossed |

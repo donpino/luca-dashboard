@@ -1417,3 +1417,13 @@ body {
 a.tabbar__item {
   text-decoration: none;
 }
+
+/* ---- v1.43 Log as a tab: the save button floats above the tab bar ---- */
+
+.screen--log {
+  padding-bottom: 190px;
+}
+
+.screen--log .sticky-footer {
+  bottom: calc(max(env(safe-area-inset-bottom), 16px) + 82px);
+}
