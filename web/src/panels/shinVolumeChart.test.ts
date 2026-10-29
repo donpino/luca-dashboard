@@ -197,7 +197,7 @@ describe('buildShinVolumeOption — axis-triggered hover tooltip (§9 on-demand 
 
   it('shows the raw 0-3 shin value when answered, never blank, never a bare 0 rendered as nothing', () => {
     const html = tooltip.formatter([{ dataIndex: 0 }])
-    expect(html).toContain('2026-08-08')
+    expect(html).toContain('8 Aug 2026') // date only, no time (v1.42)
     expect(html).toContain('shin: 0')
     expect(html).toContain('12.4')
   })

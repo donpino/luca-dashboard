@@ -145,6 +145,15 @@ function notAnsweredVisualScale(pointCount: number): { size: number; opacity: nu
 // chart itself). Looks the hovered day up by index in the same `series`
 // array already plotted — never recomputes shin/km/understated_volume,
 // just reads and formats them (CLAUDE.md rule 3).
+const TOOLTIP_MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+
+// "13 Oct 2026" — date only, the same style as the score charts' tooltips
+// (v1.42); the year stays because this chart can span several.
+function tooltipDate(iso: string): string {
+  const [y, m, d] = iso.split('-').map(Number)
+  return `${d} ${TOOLTIP_MONTHS[m - 1]} ${y}`
+}
+
 function tooltipFormatter(series: ShinSeriesDay[]) {
   return (paramsRaw: unknown): string => {
     const params = Array.isArray(paramsRaw) ? paramsRaw : [paramsRaw]
@@ -157,7 +166,7 @@ function tooltipFormatter(series: ShinSeriesDay[]) {
     // explicit "not answered" when null — never blank, never 0.
     const shinText = d.shin === null ? 'not answered' : String(d.shin)
     const lines = [
-      `<strong>${d.date}</strong>`,
+      `<strong>${tooltipDate(d.date)}</strong>`,
       `rolling 7d km: ${d.rolling_7d_km.toFixed(1)}`,
       `shin: ${shinText}`,
     ]

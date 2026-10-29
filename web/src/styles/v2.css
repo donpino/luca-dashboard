@@ -1406,3 +1406,14 @@ body {
 .screen--metric {
   background: linear-gradient(180deg, #1d3b66 0, var(--bg) 280px);
 }
+
+/* ---- v1.42 week picker, Log in the tab bar ---- */
+
+.daypick__day--week {
+  background: rgba(90, 162, 240, 0.16);
+  border-color: transparent;
+}
+
+a.tabbar__item {
+  text-decoration: none;
+}

@@ -337,3 +337,19 @@ def test_metrics_payload_series_weeks_and_no_later_data():
         (date(2026, 8, 10), 6.0),
     ]
     assert p["ranges"]["rhr"]["all"]["stats"]["n"] == 3
+
+
+def test_build_weeks_one_file_per_finished_week_as_on_its_sunday():
+    # v1.42: from the FR70 break's week (Mon 3 Aug 2026) to last week; the
+    # current week is week.json, never a week file.
+    from build_data import build_weeks
+
+    acts = [
+        {"date": "2026-08-12", "type": "running", "distance_km": 6.0},
+        {"date": "2026-08-18", "type": "running", "distance_km": 9.0},
+    ]
+    inputs = {"activities": acts, "daily": [], "biometrics": [], "sessions": [], "weekly": []}
+    weeks = build_weeks(inputs, date(2026, 8, 19))  # a Wednesday
+    assert sorted(weeks) == [date(2026, 8, 3), date(2026, 8, 10)]
+    assert weeks[date(2026, 8, 10)]["actual_km"] == 6.0
+    assert weeks[date(2026, 8, 10)]["week_end"] == date(2026, 8, 16)

@@ -671,9 +671,9 @@ def week_checkin(
 ) -> dict:
     """§8.2 "Generate check-in" — DASHBOARD_SPEC.md §3.3, v1.28 amendment.
 
-    Week selection: the ISO week (Mon-Sun) containing `today`, always —
-    there is no picker (§8.2 v1.28: not stated in the spec's original
-    panel table, decided when this function was specified).
+    Week selection: the ISO week (Mon-Sun) containing `today`, always.
+    Since v1.42 the Week page has a picker: build_data.py calls this once
+    per past week with `today` = that week's Sunday.
 
     `weekly`/`sessions`/`daily`/`biometrics` are only ever consulted for
     rows inside [week_start, week_end] (or, for `activities`, the two

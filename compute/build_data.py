@@ -218,57 +218,45 @@ def build_today(db, today: date) -> dict:
     return _today_payload(_fetch_today_inputs(db), today)
 
 
+def _fetch_week_inputs(db) -> dict:
+    """Whole tables (all small): week_checkin() filters by date itself, so
+    the same inputs build this week and every past week (v1.42)."""
+    return {
+        "activities": fetch_all(db, "activities", "date,type,distance_km"),
+        "daily": fetch_all(db, "daily", "date,shin"),
+        "biometrics": fetch_all(db, "biometrics", "date,sleep_total_min,rhr,hrv_overnight"),
+        "sessions": fetch_all(db, "sessions", "date,session_type,done"),
+        "weekly": fetch_all(db, "weekly", "week_start,week,dates_label,planned_km"),
+    }
+
+
+def _week_payload(inputs: dict, today: date) -> dict:
+    """§8.2 Week page — the ISO week containing `today`, as known on it."""
+    return week_checkin(
+        _as_known_on(inputs["activities"], today),
+        _as_known_on(inputs["daily"], today),
+        _as_known_on(inputs["biometrics"], today),
+        inputs["sessions"],  # the plan for the week, not a measurement
+        inputs["weekly"],
+        today,
+    )
+
+
 def build_week(db, today: date) -> dict:
-    """§8.2 Week page — the "Generate check-in" block (v1.28). Scopes every
-    query to the two weeks week_checkin() actually needs (this week and
-    the previous one, for the ramp) rather than fetching whole tables —
-    unlike build_today/build_shin_series, which already read the full
-    history for other reasons."""
-    week_start = today - timedelta(days=today.weekday())
-    week_end = week_start + timedelta(days=6)
-    prev_week_start = week_start - timedelta(days=7)
+    return _week_payload(_fetch_week_inputs(db), today)
 
-    activities = (
-        db.table("activities")
-        .select("date,type,distance_km")
-        .gte("date", prev_week_start.isoformat())
-        .lte("date", week_end.isoformat())
-        .execute()
-        .data
-    )
-    daily = (
-        db.table("daily")
-        .select("date,shin")
-        .gte("date", week_start.isoformat())
-        .lte("date", week_end.isoformat())
-        .execute()
-        .data
-    )
-    biometrics = (
-        db.table("biometrics")
-        .select("date,sleep_total_min,rhr,hrv_overnight")
-        .gte("date", week_start.isoformat())
-        .lte("date", week_end.isoformat())
-        .execute()
-        .data
-    )
-    sessions = (
-        db.table("sessions")
-        .select("date,session_type,done")
-        .gte("date", week_start.isoformat())
-        .lte("date", week_end.isoformat())
-        .execute()
-        .data
-    )
-    weekly = (
-        db.table("weekly")
-        .select("week_start,week,dates_label,planned_km")
-        .eq("week_start", week_start.isoformat())
-        .execute()
-        .data
-    )
 
-    return week_checkin(activities, daily, biometrics, sessions, weekly, today)
+def build_weeks(inputs: dict, today: date) -> dict[date, dict]:
+    """v1.42 week navigation: every finished week from the FR70 break's week
+    to last week, each built as on its Sunday. One file per week, fetched
+    only when the athlete picks it."""
+    out = {}
+    monday = SCORES_START - timedelta(days=SCORES_START.weekday())
+    this_monday = today - timedelta(days=today.weekday())
+    while monday < this_monday:
+        out[monday] = _week_payload(inputs, monday + timedelta(days=6))
+        monday += timedelta(days=7)
+    return out
 
 
 # Scores never reach back past the FR70 device break (CLAUDE.md rule 5):
@@ -480,13 +468,19 @@ def main():
         _write_json(DATA_DIR / "days" / f"{d.isoformat()}.json", payload)
     print(f"wrote {len(days)} day file(s) to {DATA_DIR / 'days'}")
 
-    week_payload = build_week(db, today)
+    week_inputs = _fetch_week_inputs(db)
+    week_payload = _week_payload(week_inputs, today)
     week_out_path = DATA_DIR / "week.json"
     _write_json(week_out_path, week_payload)
     print(
         f"wrote {week_out_path} — week {week_payload['week_start']}, "
         f"understated_volume: {week_payload['understated_volume']}"
     )
+
+    weeks = build_weeks(week_inputs, today)
+    for monday, payload in weeks.items():
+        _write_json(DATA_DIR / "weeks" / f"{monday.isoformat()}.json", payload)
+    print(f"wrote {len(weeks)} week file(s) to {DATA_DIR / 'weeks'}")
 
 
 if __name__ == "__main__":

@@ -1,17 +1,17 @@
 // Persistent primary navigation — §8.1 v1.35 floating tab bar: Today /
-// Week / Block, plus Lab rendered disabled until Phase 5 (§12). State-
-// backed tabs, not routes (DASHBOARD_SPEC.md v1.25 amendment). /log is
-// reached from the Today header's "+" — a plain anchor and full page load
-// into the separate `web/log/index.html` build entry (§4's two-entry
-// split); it must never become a state-backed tab.
+// Week / Block as state-backed tabs, not routes (DASHBOARD_SPEC.md v1.25
+// amendment). v1.42: the fourth slot, a disabled Lab until then, is Log —
+// a plain anchor and full page load into the separate `web/log/index.html`
+// build entry (§4's two-entry split), exactly like the Today header's "+";
+// it must never become a state-backed tab.
 
 export type Tab = 'today' | 'week' | 'block'
 
-const ICONS: Record<Tab | 'lab', string> = {
+const ICONS: Record<Tab | 'log', string> = {
   today: 'M3 3h7v7H3zM14 3h7v7h-7zM3 14h7v7H3zM14 14h7v7h-7z',
   week: 'M3 17l6-6 4 4 8-8M14 7h7v7',
   block: 'M3 18V8a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v10M3 13h18M7 6V4M17 6V4',
-  lab: 'M9 3h6M10 3v6l-5 9a2 2 0 0 0 1.8 3h10.4a2 2 0 0 0 1.8-3l-5-9V3',
+  log: 'M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z',
 }
 
 const TABS: { key: Tab; label: string }[] = [
@@ -51,10 +51,10 @@ export default function Nav({ active, onSelect }: NavProps) {
           </button>
         )
       })}
-      <button type="button" className="tabbar__item" disabled title="Unlocks in Phase 5">
-        <Icon d={ICONS.lab} />
-        Lab
-      </button>
+      <a className="tabbar__item" href="/log/">
+        <Icon d={ICONS.log} />
+        Log
+      </a>
     </nav>
   )
 }

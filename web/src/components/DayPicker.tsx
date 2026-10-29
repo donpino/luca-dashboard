@@ -3,6 +3,8 @@
 // the three chips act as a filter), so the athlete sees the month at a
 // glance and jumps straight to a day. Values come from scores.json's
 // `series` as-is; a day without a value has no sphere, never a 0.
+// v1.42: `mode="week"` serves the Week page — the selected week's row is
+// highlighted and tapping any day picks its week (Monday).
 
 import PageLoader from './PageLoader'
 import { useState } from 'react'
@@ -27,13 +29,22 @@ function sphere(key: ScoreKey, e: SeriesEntry | undefined): { level: number; col
 
 const iso = (y: number, m: number, d: number) => `${y}-${String(m + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`
 
+// calendar layout only: the Monday of the grid row a date sits in
+function mondayOf(day: string): string {
+  const [y, m, d] = day.split('-').map(Number)
+  const t = new Date(Date.UTC(y, m - 1, d))
+  t.setUTCDate(t.getUTCDate() - ((t.getUTCDay() + 6) % 7))
+  return t.toISOString().slice(0, 10)
+}
+
 interface Props {
-  selected: string | null // null = today
-  onPick: (day: string | null) => void
+  mode?: 'day' | 'week'
+  selected: string | null // a day, or a week's Monday; null = the current one
+  onPick: (picked: string | null) => void // null = back to the current one
   onClose: () => void
 }
 
-export default function DayPicker({ selected, onPick, onClose }: Props) {
+export default function DayPicker({ mode = 'day', selected, onPick, onClose }: Props) {
   // always the live file: its series runs to the newest day
   const state = useJson<ScoresResponse>('scores.json')
   const [filter, setFilter] = useState<ScoreKey>('recovery')
@@ -47,7 +58,8 @@ export default function DayPicker({ selected, onPick, onClose }: Props) {
     )
   }
   const { series, as_of: asOf } = state.data
-  const first = series.length ? series[0].date : asOf
+  // week mode reaches back to the Monday of the first scored day's week
+  const first = mode === 'week' && series.length ? mondayOf(series[0].date) : series.length ? series[0].date : asOf
   const byDate = new Map(series.map((e) => [e.date, e]))
   const anchor = selected ?? asOf
   const view = month ?? { y: Number(anchor.slice(0, 4)), m: Number(anchor.slice(5, 7)) - 1 }
@@ -62,7 +74,7 @@ export default function DayPicker({ selected, onPick, onClose }: Props) {
   const canNext = iso(view.y, view.m, daysIn) < asOf
 
   return (
-    <div className="daypick" role="dialog" aria-label="Choose a day">
+    <div className="daypick" role="dialog" aria-label={mode === 'week' ? 'Choose a week' : 'Choose a day'}>
       <div className="daypick__head">
         <button type="button" className="round-btn" onClick={() => shift(-1)} disabled={!canPrev} aria-label="Previous month">
           ‹
@@ -101,14 +113,17 @@ export default function DayPicker({ selected, onPick, onClose }: Props) {
           const day = iso(view.y, view.m, n)
           const s = sphere(filter, byDate.get(day))
           const usable = day >= first && day <= asOf
-          const isSelected = day === (selected ?? asOf)
+          const week = mondayOf(day)
+          const current = mode === 'week' ? mondayOf(asOf) : asOf
+          const isSelected = mode === 'week' ? week === (selected ?? current) : day === (selected ?? asOf)
+          const pick = mode === 'week' ? week : day
           return (
             <button
               key={day}
               type="button"
-              className={`daypick__day${isSelected ? ' daypick__day--on' : ''}`}
+              className={`daypick__day${isSelected ? (mode === 'week' ? ' daypick__day--week' : ' daypick__day--on') : ''}`}
               disabled={!usable}
-              onClick={() => onPick(day === asOf ? null : day)}
+              onClick={() => onPick(pick === current ? null : pick)}
               aria-label={s ? `${n} ${MONTHS[view.m]}: ${s.text}` : `${n} ${MONTHS[view.m]}`}
             >
               <span className="daypick__num">{n}</span>

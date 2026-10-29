@@ -27,6 +27,8 @@ export default function App() {
   const [metric, setMetric] = useState<MetricKey | null>(null) // v1.41 card detail
   // v1.39: the day Today and the detail pages show; null = today (live)
   const [day, setDay] = useState<string | null>(null)
+  // v1.42: the week the Week tab shows (its Monday); null = this week
+  const [week, setWeek] = useState<string | null>(null)
 
   // v1.40: warm every tab's file once, so switching tabs never waits
   useEffect(() => {
@@ -62,7 +64,7 @@ export default function App() {
           )}
           {tab === 'today' && detail !== null && <ScoreDetail kind={detail} day={day} onBack={() => setDetail(null)} />}
           {tab === 'today' && metric !== null && <MetricDetail kind={metric} day={day} onBack={() => setMetric(null)} />}
-          {tab === 'week' && <Week />}
+          {tab === 'week' && <Week week={week} onWeek={setWeek} />}
           {tab === 'block' && <Block />}
         </div>
       </main>

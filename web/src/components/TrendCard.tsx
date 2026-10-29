@@ -88,7 +88,18 @@ export default function TrendCard({
         backgroundColor: '#1A1D22',
         borderColor: '#2A2F37',
         textStyle: { color: '#F2F4F7' },
-        valueFormatter: (v: unknown) => format(typeof v === 'number' ? v : null),
+        // date only: every point sits at midnight, so a time would be noise
+        formatter: (params: unknown) => {
+          const list = (Array.isArray(params) ? params : [params]) as {
+            seriesIndex: number
+            marker: string
+            value: [string, number | null]
+          }[]
+          const main = list.find((p) => p.seriesIndex === (lane ? 2 : 0))
+          if (!main) return ''
+          const [date, v] = main.value
+          return `${fmtDay(date)}<br/>${main.marker}${format(v)}`
+        },
       },
       series: [
         ...(lane

@@ -1,4 +1,4 @@
-# Training Dashboard — Build Spec v1.41
+# Training Dashboard — Build Spec v1.42
 
 **Athlete:** Luca · **Campaign:** middle-distance, Foundation block → 2032
 **Status:** Phase 1 complete — `daily` table, RLS/grants, `/log`,
@@ -2407,6 +2407,27 @@ activity in the same day still writes normally, `indoor_cardio` resolves
 to `'other'`, and a `TYPE_MAP` value-set assertion guards against a
 future typo landing outside `{'running', 'cycling', 'other'}`.
 
+**Amendments in v1.42 (29 Oct 2026)** — three more requests from the
+athlete.
+
+- **Chart tooltips show the date only (§9).** Every point sits at
+  midnight, so the time ECharts appended ("00:00:00") was noise. Score and
+  metric trends read "17 Oct"; the shin chart, which can span years,
+  "17 Oct 2026".
+- **Week picker (§8.2).** The Week title opens the same month calendar
+  as Today's (v1.39), in week mode: the selected week's row is
+  highlighted, the Recovery / Strain / Sleep chips still fill the day
+  spheres, and tapping any day picks its week. A past week shows the whole
+  page as it stood on its Sunday, the title reads its dates, and *Back to
+  this week* returns. `build_data.py` writes `weeks/<monday>.json` for
+  every finished week from the FR70 break's week (3 Aug 2026) — the same
+  `week_checkin()` as `week.json`, called with that week's Sunday.
+- **Log replaces Lab in the tab bar (§8.1, §8.4).** Lab was a permanently
+  disabled tab the athlete found meaningless; the slot now links to
+  `/log/` — a plain anchor and full page load, never a state-backed tab,
+  so the two-entry split (§4) is unchanged. §8.4 stays the plan for Lab
+  (Phase 5+); it returns to the bar when it exists, by its own amendment.
+
 **Amendments in v1.41 (29 Oct 2026)** — the athlete's two follow-ups to
 v1.40.
 
@@ -3358,7 +3379,7 @@ cards below (its history stays in those amendments).
 | Flag | Anything needing a decision | Unchanged from v1.26/v1.27: at most one of shin → illness → volume ramp, absent when nothing qualifies. Renders as an amber card above the session. |
 | Today's session | What to do | Unchanged data (`session_for_date`): `session_type`, `purpose`, `prescription`. No row renders as plain text saying so. |
 | Your cards | The measured inputs | One row each: **HRV** (last night; once `hrv_baseline` exists, its 7-day vs 30-day mean — §7 defines no HRV band), **Resting HR** (band from `rhr_baseline`), **Sleep** (asleep vs need), **Weekly km** (`weekly_km`, running only, Monday to date), **Shin** (latest answer and its date — never a mean, §7). All pre-computed in `today.json`'s `cards` block. Each row's sphere icon is decorative: a fixed fill in the metric's colour, carrying no value. A card with no data reads "—", never 0. **v1.41:** each card is a button — HRV, Resting HR, Sleep and Weekly km open a detail page with that value over time (`metrics.json`); Shin opens Block. |
-| Tab bar | Navigation | Floating, bottom: Today · Week · Block · Lab (Lab disabled until Phase 5). State, not routes (v1.25). |
+| Tab bar | Navigation | Floating, bottom: Today · Week · Block · Log. Today/Week/Block are state, not routes (v1.25); Log is a link to `/log/` (v1.42 — it replaced a disabled Lab tab; Lab returns when §8.4 is built). |
 
 **Score detail pages (v1.35)** — opened from a sphere; a back button
 returns to Today. State, not routes.
@@ -3527,7 +3548,7 @@ renders as a markArea spanning the full plot height, behind both series,
 still day-by-day off the same flag — see the v1.22 amendment. §10's three
 shin marker states are unchanged by this.
 
-### 8.4 Lab — locked by default
+### 8.4 Lab — locked by default *(not in the tab bar until built — v1.42)*
 Correlation matrix, weekday effects, bedtime-vs-recovery scatter, habit impact.
 
 Each panel declares `min_n` and **renders a locked state below it**:
@@ -3740,6 +3761,7 @@ about a session, and fill-vs-hollow carries it without colour.
 | **2.9** *(added v1.39)* | 29 Oct 2026 | Day picker on Today; per-day `days/<date>.json` from `build_data.py`; detail pages end on the picked day. |
 | **2.10** *(added v1.40)* | 29 Oct 2026 | Screens folded into `device_in_bed` (migration 012); Week, Block and `/log` in the v1.35 system; sphere slosh; page loader, JSON cache and prefetch. |
 | **2.11** *(added v1.41)* | 29 Oct 2026 | Wave-shaped slosh; metric card detail pages (`metrics.json`, RHR lane). |
+| **2.12** *(added v1.42)* | 29 Oct 2026 | Date-only tooltips; Week picker (`weeks/<monday>.json`); Log replaces Lab in the tab bar. |
 | **3** | +21 days on FR70 | HRV/RHR baselines established, bands become real, autoregulation panel on |
 | **4** | Oct, post-benchmark | Campaign page — trajectory vs floor/target/stretch |
 | **5** | 2027 | Lab unlocks, panel by panel, as each `min_n` is crossed |
