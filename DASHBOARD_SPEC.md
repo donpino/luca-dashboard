@@ -1,4 +1,4 @@
-# Training Dashboard — Build Spec v1.38
+# Training Dashboard — Build Spec v1.39
 
 **Athlete:** Luca · **Campaign:** middle-distance, Foundation block → 2032
 **Status:** Phase 1 complete — `daily` table, RLS/grants, `/log`,
@@ -2407,6 +2407,34 @@ activity in the same day still writes normally, `indoor_cardio` resolves
 to `'other'`, and a `TYPE_MAP` value-set assertion guards against a
 future typo landing outside `{'running', 'cycling', 'other'}`.
 
+**Amendments in v1.39 (29 Oct 2026)** — day navigation, asked for by the
+athlete on 28 Oct and designed with them on 29 Oct.
+
+- **Day picker (§8.1).** Tapping the Today title opens a month calendar.
+  Under each day sits a small sphere — the same liquid sphere as the home
+  — for one score; three chips (Recovery / Strain / Sleep) choose which,
+  acting as a filter, so the month reads at a glance before picking a
+  day. Recovery spheres take the band colour, Strain and Sleep their own;
+  a day with no value shows an empty dashed ring, never a 0. Days before
+  the first scored day or after today are disabled. Values are
+  `scores.json` `series` as-is.
+- **A picked day changes everything** (the athlete's requirement): the
+  three spheres, the session, the flag and every card show that day as it
+  stood then — no later night, run or shin answer. The title shows the
+  date, *Back to today* replaces *Sync now* (a sync is about now), and
+  the live "so far" line is hidden.
+- **Detail pages follow the picked day:** each trend ends on it, with the
+  days before it, and MEAN / MIN / MAX / delta and the range locks are
+  computed for windows ending on it.
+- **How (§4, rule 3).** `build_data.py` writes one
+  `web/public/data/days/<date>.json` per scored day before today — the
+  `today` and `scores` payloads exactly as they would have been built on
+  that date (every input filtered to dates ≤ it; the score series is
+  computed once and cut at the date, which is exact because a score for
+  `d` reads only dates ≤ `d`). The frontend fetches one file when a day
+  is picked and renders it with the same components; it derives nothing.
+  ~23 KB per day (1.9 MB for 82 days), fetched only on demand.
+
 **Amendments in v1.38 (29 Oct 2026)** — Garmin's lifestyle log feeds
 `daily`. The athlete already fills in Garmin Connect's lifestyle log
 daily (history from 11 Aug 2026); `python-garminconnect` 0.3.9 exposes it
@@ -3266,7 +3294,7 @@ cards below (its history stays in those amendments).
 
 | Block | Answers | Encoding |
 |---|---|---|
-| Header | Which day | "Today", the date, a mini Recovery sphere, a **Sync now** button (v1.36 — spins while syncing, then "Publishing…", then reloads the page's JSON once the chained deploy is live; shows the cooldown time if pressed within 10 minutes), and a `+` linking to `/log`. When today's data is partial, a line reads "Today so far · as of HH:MM · completes tomorrow morning" (`scores.json` `data_through_ms`). |
+| Header | Which day | "Today", the date, a mini Recovery sphere, a **Sync now** button (v1.36 — spins while syncing, then "Publishing…", then reloads the page's JSON once the chained deploy is live; shows the cooldown time if pressed within 10 minutes), and a `+` linking to `/log`. When today's data is partial, a line reads "Today so far · as of HH:MM · completes tomorrow morning" (`scores.json` `data_through_ms`). **v1.39:** tapping "Today" opens the day picker (month calendar, one sphere per day for the score chosen by the Recovery / Strain / Sleep chips); a picked day replaces the whole page and the detail pages with that day's `days/<date>.json`, the title shows its date, and *Back to today* replaces *Sync now*. |
 | Score card | How recovered, how loaded, how slept | Three liquid spheres (§10): **Recovery** (fill = score / 100, colour = band), **Strain** (fill = strain / 21), **Sleep** (fill = score / 100). Each shows its number and opens its detail page. Each is the **latest date that has a value** and states that date when it isn't the most recent synced day — the v1.30 rule that a reading never looks more current than it is. Recovery with insufficient HRV history renders an empty sphere labelled *Calibrating n/4*. |
 | Flag | Anything needing a decision | Unchanged from v1.26/v1.27: at most one of shin → illness → volume ramp, absent when nothing qualifies. Renders as an amber card above the session. |
 | Today's session | What to do | Unchanged data (`session_for_date`): `session_type`, `purpose`, `prescription`. No row renders as plain text saying so. |
@@ -3646,6 +3674,7 @@ about a session, and fill-vs-hollow carries it without colour.
 | **2.6** *(added v1.36)* | 28 Oct 2026 | Strain on Banister TRIMP (20% sedentary floor); migration 010 (`is_partial`); `sync.py --include-today`; `/api/sync` Worker endpoint and the Today "Sync now" button. |
 | **2.7** *(added v1.37)* | 29 Oct 2026 | Sleep score on personal baselines with HRV/RHR (§7); Recovery's sleep term on `behavioural_score` vs own history. |
 | **2.8** *(added v1.38)* | 29 Oct 2026 | Garmin lifestyle log → `daily` (migration 011, `sync_lifestyle`, `/log` toggles), backfill from 11 Aug. |
+| **2.9** *(added v1.39)* | 29 Oct 2026 | Day picker on Today; per-day `days/<date>.json` from `build_data.py`; detail pages end on the picked day. |
 | **3** | +21 days on FR70 | HRV/RHR baselines established, bands become real, autoregulation panel on |
 | **4** | Oct, post-benchmark | Campaign page — trajectory vs floor/target/stretch |
 | **5** | 2027 | Lab unlocks, panel by panel, as each `min_n` is crossed |

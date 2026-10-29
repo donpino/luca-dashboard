@@ -6,7 +6,7 @@
 import type { ReactNode } from 'react'
 import LiquidSphere from '../components/LiquidSphere'
 import TrendCard from '../components/TrendCard'
-import { useJson } from '../components/useJson'
+import { useDayData } from '../components/useDayData'
 import {
   BAND_COLOR,
   COLOR,
@@ -341,10 +341,12 @@ function SleepPage({ data, onBack }: { data: ScoresResponse; onBack: () => void 
   )
 }
 
-export default function ScoreDetail({ kind, onBack }: { kind: ScoreKey; onBack: () => void }) {
-  const state = useJson<ScoresResponse>('scores.json')
+// v1.39: `day` is the day picked on Today (null = live). A past day's
+// payload already ends on that day, so every trend and stat stops there.
+export default function ScoreDetail({ kind, day, onBack }: { kind: ScoreKey; day: string | null; onBack: () => void }) {
+  const state = useDayData(day).scores
   if (state.status === 'loading') return <p className="status-text status-text--muted">Loading…</p>
-  if (state.status === 'error') return <p className="status-text status-text--error">Couldn&rsquo;t load scores.json.</p>
+  if (state.status === 'error') return <p className="status-text status-text--error">Couldn&rsquo;t load the scores.</p>
   if (kind === 'recovery') return <RecoveryPage data={state.data} onBack={onBack} />
   if (kind === 'strain') return <StrainPage data={state.data} onBack={onBack} />
   return <SleepPage data={state.data} onBack={onBack} />

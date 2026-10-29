@@ -1,17 +1,19 @@
 // §8.1 v1.35 — default landing tab, the athlete's daily ten-second check.
 // Two pre-computed files: today.json (session, flag, metric cards —
 // build_today()) and scores.json (the three spheres — build_scores()).
+// v1.39: tapping the title opens the day picker; a past day reads
+// days/<day>.json instead, the same two payloads as built on that day.
 // Every number and decision was made in compute/metrics.py (CLAUDE.md
 // rule 3); this page lays it out.
 
 import { useCallback, useState } from 'react'
+import DayPicker from '../components/DayPicker'
 import LiquidSphere from '../components/LiquidSphere'
 import SyncButton from '../components/SyncButton'
-import { useJson } from '../components/useJson'
+import { useDayData } from '../components/useDayData'
 import { flagLabel, flagText } from '../panels/flagCopy'
 import { BAND_COLOR, COLOR, STRAIN_MAX, type ScoreKey, type ScoresResponse } from '../panels/scores'
 import { fmtDay, fmtMinutes, fmtScore, fmtStrain } from '../panels/scoresCopy'
-import type { TodayResponse } from '../panels/today'
 
 const WEEKDAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
 
@@ -108,17 +110,29 @@ function MetricRow({ name, sub, value, color }: RowProps) {
   )
 }
 
-export default function Today({ onOpen }: { onOpen: (key: ScoreKey) => void }) {
+interface TodayProps {
+  day: string | null // null = today (live)
+  onDay: (day: string | null) => void
+  onOpen: (key: ScoreKey) => void
+}
+
+export default function Today({ day, onDay, onOpen }: TodayProps) {
   const [version, setVersion] = useState(0)
+  const [picking, setPicking] = useState(false)
   const reload = useCallback(() => setVersion(Date.now()), [])
-  const today = useJson<TodayResponse>('today.json', version)
-  const scores = useJson<ScoresResponse>('scores.json', version)
+  const { today, scores } = useDayData(day, version)
+  const pick = (next: string | null) => {
+    setPicking(false)
+    onDay(next)
+  }
+
+  if (picking) return <DayPicker selected={day} onPick={pick} onClose={() => setPicking(false)} />
 
   if (today.status === 'loading' || scores.status === 'loading') {
     return <p className="status-text status-text--muted">Loading…</p>
   }
   if (today.status === 'error') {
-    return <p className="status-text status-text--error">Couldn&rsquo;t load today.json.</p>
+    return <p className="status-text status-text--error">Couldn&rsquo;t load {day ? `the data for ${fmtDay(day)}` : 'today.json'}.</p>
   }
   const t = today.data
   const s = scores.status === 'ready' ? scores.data : null
@@ -132,11 +146,22 @@ export default function Today({ onOpen }: { onOpen: (key: ScoreKey) => void }) {
     <div className="screen screen--today">
       <header className="today-head">
         <div>
-          <h1 className="today-head__title">Today</h1>
+          <button type="button" className="today-head__pick" onClick={() => setPicking(true)} aria-label="Choose a day">
+            <h1 className="today-head__title">
+              {day ? fmtDay(day) : 'Today'}
+              <Chevron />
+            </h1>
+          </button>
           <p className="today-head__date">{longDate(t.date)}</p>
         </div>
         {s?.recovery && <LiquidSphere size={40} level={s.recovery.score / 100} color={BAND_COLOR[s.recovery.band]} bubbles={false} />}
-        <SyncButton onDone={reload} />
+        {day ? (
+          <button type="button" className="chip chip--on" onClick={() => onDay(null)}>
+            BACK TO TODAY
+          </button>
+        ) : (
+          <SyncButton onDone={reload} />
+        )}
         <a className="round-btn" href="/log/" aria-label="Log today">
           <svg width="20" height="20" viewBox="0 0 24 24" aria-hidden="true">
             <path d="M12 5v14M5 12h14" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" />
@@ -144,7 +169,7 @@ export default function Today({ onOpen }: { onOpen: (key: ScoreKey) => void }) {
         </a>
       </header>
 
-      {s?.data_through_ms && (
+      {!day && s?.data_through_ms && (
         <p className="sync-status">
           Today so far · as of{' '}
           {new Date(s.data_through_ms).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} · completes tomorrow
@@ -165,10 +190,10 @@ export default function Today({ onOpen }: { onOpen: (key: ScoreKey) => void }) {
         </section>
       )}
 
-      <h2 className="section">TODAY&rsquo;S SESSION</h2>
-      <section className="card session" aria-label="Today's session">
+      <h2 className="section">{day ? 'SESSION' : <>TODAY&rsquo;S SESSION</>}</h2>
+      <section className="card session" aria-label="Session">
         {t.session === null ? (
-          <p className="row__sub">No session logged for today.</p>
+          <p className="row__sub">No session logged for {day ? 'this day' : 'today'}.</p>
         ) : (
           <>
             <span className="row__name">{(t.session.session_type ?? 'Session').toUpperCase()}</span>

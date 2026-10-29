@@ -21,6 +21,8 @@ import type { ScoreKey } from './panels/scores'
 export default function App() {
   const [tab, setTab] = useState<Tab>('today')
   const [detail, setDetail] = useState<ScoreKey | null>(null)
+  // v1.39: the day Today and the detail pages show; null = today (live)
+  const [day, setDay] = useState<string | null>(null)
 
   const select = (next: Tab) => {
     setDetail(null)
@@ -35,8 +37,8 @@ export default function App() {
     <div className="app-shell">
       <main className="app-main">
         <div className="page">
-          {tab === 'today' && detail === null && <Today onOpen={open} />}
-          {tab === 'today' && detail !== null && <ScoreDetail kind={detail} onBack={() => setDetail(null)} />}
+          {tab === 'today' && detail === null && <Today day={day} onDay={setDay} onOpen={open} />}
+          {tab === 'today' && detail !== null && <ScoreDetail kind={detail} day={day} onBack={() => setDetail(null)} />}
           {tab === 'week' && (
             <div className="screen">
               <h1 className="detail-head__title">Week</h1>

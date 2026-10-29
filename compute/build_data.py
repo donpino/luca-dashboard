@@ -166,21 +166,31 @@ def _or_none(value):
     return None if isinstance(value, InsufficientData) else value
 
 
-def build_today(db, today: date) -> dict:
+def _fetch_today_inputs(db) -> dict:
+    return {
+        "biometrics": fetch_all(db, "biometrics", "date,device,sleep_total_min,rhr,hrv_overnight,hrv_status"),
+        "daily": fetch_all(db, "daily", "date,shin,illness"),
+        "activities": fetch_all(db, "activities", "date,type,distance_km"),
+        # all sessions (a few dozen rows), so any past day can be built (v1.39)
+        "sessions": fetch_all(db, "sessions", "date,session_type,purpose,prescription,done"),
+    }
+
+
+def _as_known_on(rows: list[dict], d: date, key: str = "date") -> list[dict]:
+    """Rows dated on or before `d` — the data as it stood that day, so a
+    past day's page (v1.39) never shows a later run, night or answer."""
+    return [r for r in rows if r[key] <= d.isoformat()]
+
+
+def _today_payload(inputs: dict, today: date) -> dict:
     """§8.1 Today page — Panel 1 (last_night), Panel 2 (session), Panel 3
     (flag). One JSON file for the whole page: all three panels load
     together on the athlete's daily ten-second check, so one fetch beats
     three (DASHBOARD_SPEC.md v1.26 amendment)."""
-    biometrics = fetch_all(db, "biometrics", "date,device,sleep_total_min,rhr,hrv_overnight,hrv_status")
-    daily = fetch_all(db, "daily", "date,shin,illness")
-    activities = fetch_all(db, "activities", "date,type,distance_km")
-    session_rows = (
-        db.table("sessions")
-        .select("date,session_type,purpose,prescription,done")
-        .eq("date", today.isoformat())
-        .execute()
-        .data
-    )
+    biometrics = _as_known_on(inputs["biometrics"], today)
+    daily = _as_known_on(inputs["daily"], today)
+    activities = _as_known_on(inputs["activities"], today)
+    session_rows = [r for r in inputs["sessions"] if r["date"] == today.isoformat()]
 
     answered = sorted((r for r in daily if r.get("shin") is not None), key=lambda r: r["date"])
     rhr_base = rhr_baseline(biometrics, today)
@@ -202,6 +212,10 @@ def build_today(db, today: date) -> dict:
             "shin_latest": {"date": answered[-1]["date"], "shin": answered[-1]["shin"]} if answered else None,
         },
     }
+
+
+def build_today(db, today: date) -> dict:
+    return _today_payload(_fetch_today_inputs(db), today)
 
 
 def build_week(db, today: date) -> dict:
@@ -281,9 +295,7 @@ def _score_ranges(series: list[dict], key: str, today: date) -> dict:
     return out
 
 
-def build_scores(db, today: date) -> dict:
-    """§8.1 v1.35 — the three score spheres, their detail pages, and the
-    Recovery calendar. One file: Today and every detail page read it."""
+def _fetch_scores_inputs(db, today: date) -> dict:
     biometrics = fetch_all(
         db,
         "biometrics",
@@ -299,8 +311,25 @@ def build_scores(db, today: date) -> dict:
         if a["date"] >= SCORES_START.isoformat()
     ]
     streams = {r["activity_id"]: r["samples"] for r in fetch_all(db, "activity_hr", "activity_id,samples")}
+    return {
+        "biometrics": biometrics,
+        "hr_daily": hr_daily,
+        "activities": activities,
+        # computed once; a past day's payload is a prefix of it, which is
+        # exact — every score for d reads only dates <= d
+        "raw": score_series(biometrics, hr_daily, activities, streams, SCORES_START, today),
+    }
 
-    raw = score_series(biometrics, hr_daily, activities, streams, SCORES_START, today)
+
+def _scores_payload(inputs: dict, today: date) -> dict:
+    """§8.1 v1.35 — the three score spheres, their detail pages, and the
+    Recovery calendar. One file: Today and every detail page read it.
+    For a past day (v1.39) everything stops at `today`: the spheres show
+    that day, and the trends and range stats end on it."""
+    biometrics = _as_known_on(inputs["biometrics"], today)
+    hr_daily = _as_known_on(inputs["hr_daily"], today)
+    activities = _as_known_on(inputs["activities"], today)
+    raw = [e for e in inputs["raw"] if e["date"] <= today]
     # v1.36: dates written by the manual "Sync now" for a day still in
     # progress. Flagged, never hidden — the page labels them as partial.
     partial_dates = {r["date"] for r in biometrics if r.get("is_partial")} | {
@@ -327,7 +356,7 @@ def build_scores(db, today: date) -> dict:
 
     rec = latest("recovery")
     calibrating = None
-    if rec is None:
+    if rec is None and raw:
         last = raw[-1]["recovery"]
         calibrating = {"n": last.n or 0, "required": last.required}
     bio_by_date = {r["date"]: r for r in biometrics}
@@ -353,11 +382,28 @@ def build_scores(db, today: date) -> dict:
     }
 
 
+def build_scores(db, today: date) -> dict:
+    return _scores_payload(_fetch_scores_inputs(db, today), today)
+
+
+def build_days(today_inputs: dict, scores_inputs: dict, today: date) -> dict[date, dict]:
+    """v1.39 day navigation: for every scored day before `today`, the
+    Today and scores payloads exactly as they would have been built on it.
+    One small file per day, fetched only when the athlete picks that day."""
+    out = {}
+    d = SCORES_START
+    while d < today:
+        out[d] = {"today": _today_payload(today_inputs, d), "scores": _scores_payload(scores_inputs, d)}
+        d += timedelta(days=1)
+    return out
+
+
 def main():
     db = get_db()
     today = date.today()
 
-    scores_payload = build_scores(db, today)
+    scores_inputs = _fetch_scores_inputs(db, today)
+    scores_payload = _scores_payload(scores_inputs, today)
     scores_out_path = DATA_DIR / "scores.json"
     _write_json(scores_out_path, scores_payload)
     print(f"wrote {scores_out_path} — recovery: {(scores_payload['recovery'] or {}).get('score')}")
@@ -370,10 +416,16 @@ def main():
         f"{payload['coverage']['answered']}/{payload['coverage']['total']}"
     )
 
-    today_payload = build_today(db, today)
+    today_inputs = _fetch_today_inputs(db)
+    today_payload = _today_payload(today_inputs, today)
     today_out_path = DATA_DIR / "today.json"
     _write_json(today_out_path, today_payload)
     print(f"wrote {today_out_path} — flag: {today_payload['flag']}")
+
+    days = build_days(today_inputs, scores_inputs, today)
+    for d, payload in days.items():
+        _write_json(DATA_DIR / "days" / f"{d.isoformat()}.json", payload)
+    print(f"wrote {len(days)} day file(s) to {DATA_DIR / 'days'}")
 
     week_payload = build_week(db, today)
     week_out_path = DATA_DIR / "week.json"

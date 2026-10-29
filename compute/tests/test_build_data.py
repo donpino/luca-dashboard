@@ -275,3 +275,36 @@ def test_build_scores_flags_a_partial_day_without_hiding_it():
     assert payload["series"][-1]["partial"] is True and payload["series"][-2]["partial"] is False
     assert payload["data_through_ms"] == 121000
     assert payload["strain"]["date"] == today  # today's partial strain is shown, labelled
+
+
+def test_build_days_shows_each_day_as_it_stood(tmp_path):
+    # v1.39: a past day's payload never sees a later night, run or answer.
+    from datetime import timedelta
+
+    from build_data import SCORES_START, _fetch_scores_inputs, _fetch_today_inputs, build_days
+
+    today = SCORES_START + timedelta(days=10)
+    bio = [
+        {"date": (SCORES_START + timedelta(days=i)).isoformat(), "device": "fr70", "hrv_overnight": 50 + i, "rhr": 48,
+         "sleep_total_min": 450}
+        for i in range(10)
+    ]
+    acts = [
+        {"date": (SCORES_START + timedelta(days=2)).isoformat(), "type": "running", "distance_km": 5.0},
+        {"date": (SCORES_START + timedelta(days=4)).isoformat(), "type": "running", "distance_km": 8.0},
+    ]
+    daily = [{"date": (SCORES_START + timedelta(days=5)).isoformat(), "shin": 2, "illness": False}]
+    db = _FakeDB({"biometrics": bio, "activities": acts, "daily": daily})
+    days = build_days(_fetch_today_inputs(db), _fetch_scores_inputs(db, today), today)
+
+    assert sorted(days) == [SCORES_START + timedelta(days=i) for i in range(10)]  # never today itself
+    d3 = days[SCORES_START + timedelta(days=3)]
+    # 8 Aug 2026 is a Saturday: the week of day 3 (11 Aug, Tue) starts 10 Aug,
+    # so day 2's run (10 Aug) counts and day 4's (12 Aug) not yet
+    assert d3["today"]["cards"]["weekly_km"] == 5.0
+    assert d3["today"]["last_night"]["hrv_overnight"] == 53
+    assert d3["today"]["cards"]["shin_latest"] is None  # answered on day 5, later
+    assert d3["scores"]["as_of"] == SCORES_START + timedelta(days=3)
+    assert d3["scores"]["series"][-1]["date"] == SCORES_START + timedelta(days=3)
+    assert d3["scores"]["sleep"]["date"] == SCORES_START + timedelta(days=3)
+    _write_json(tmp_path / "d3.json", d3)  # coordinate gate
