@@ -389,6 +389,76 @@ def sync_activities(client, db: Client, d: date, session_map: dict[str, str]) ->
     return count
 
 
+# Garmin lifestyle-log behaviour name -> `daily` column (spec §5, §6, v1.38).
+# By name, not behaviourId: custom behaviours (Melatonin) get an
+# account-specific id. An unlisted name is skipped and named, never guessed.
+LIFESTYLE_MAP = {
+    "alcohol": "alcohol",
+    "late meals": "late_meal",
+    "stretching": "stretching",
+    "illness": "illness",
+    "melatonin": "melatonin",
+    "injured": "injured",
+    "cold showers/baths": "cold_shower",
+    "nasal strips": "nasal_strips",
+    "traveling/vacation": "travelling",
+    "journaling": "journaling",
+    "reading in bed": "reading_in_bed",
+    "screens before bed": "screens_before_bed",
+}
+LIFESTYLE_COLUMNS = sorted(set(LIFESTYLE_MAP.values()))
+
+
+def lifestyle_answers(report: dict) -> dict[str, bool]:
+    """Garmin's YES/NO per mapped column. A behaviour with no logStatus was
+    not answered that day and is absent — never read as NO (rule 12)."""
+    out: dict[str, bool] = {}
+    for b in report.get("dailyLogsReport") or []:
+        name = (b.get("name") or "").strip().lower()
+        status = b.get("logStatus")
+        if status not in ("YES", "NO"):
+            continue
+        col = LIFESTYLE_MAP.get(name)
+        if col is None:
+            print(f"WARNING: unmapped Garmin lifestyle behaviour {b.get('name')!r} skipped — add it to LIFESTYLE_MAP deliberately.")
+            continue
+        out[col] = status == "YES"
+    return out
+
+
+def merge_lifestyle(existing: dict | None, answers: dict[str, bool]) -> dict[str, bool]:
+    """The columns to write. A yes from either source counts: Garmin YES
+    sets true; Garmin NO fills only a column still NULL, so it never undoes
+    a yes ticked on /log. (/log saves untouched toggles as false, so a
+    fill-only-NULL rule would drop every Garmin yes logged after /log.)"""
+    existing = existing or {}
+    updates = {}
+    for col, yes in answers.items():
+        current = existing.get(col)
+        if yes and current is not True:
+            updates[col] = True
+        elif not yes and current is None:
+            updates[col] = False
+    return updates
+
+
+def sync_lifestyle(client, db: Client, d: date) -> None:
+    ds = d.isoformat()
+    answers = lifestyle_answers(client.get_lifestyle_logging_data(ds) or {})
+    if not answers:
+        print(f"{ds}: lifestyle log not filled in, skipped.")
+        return
+    rows = db.table("daily").select(",".join(["date", *LIFESTYLE_COLUMNS])).eq("date", ds).execute().data
+    updates = merge_lifestyle(rows[0] if rows else None, answers)
+    if not updates:
+        print(f"{ds}: lifestyle log already in daily.")
+        return
+    # Only the lifestyle columns go in the payload: on conflict PostgREST
+    # leaves every other column (shin, journal, ...) untouched.
+    db.table("daily").upsert({"date": ds, **updates}, on_conflict="date").execute()
+    print(f"{ds}: lifestyle log upserted ({len(updates)} column(s)).")
+
+
 def repair_session_links(db: Client, session_map: dict[str, str]) -> tuple[int, int]:
     """Self-healing pass over every `activities` row with `session_id IS
     NULL`, across all dates, not just this run's sync window — that's
@@ -423,6 +493,11 @@ def main() -> None:
     parser.add_argument("--from", dest="from_", metavar="YYYY-MM-DD")
     parser.add_argument("--to", dest="to_", metavar="YYYY-MM-DD")
     parser.add_argument(
+        "--lifestyle-only",
+        action="store_true",
+        help="write only the Garmin lifestyle log (one-off backfill, v1.38)",
+    )
+    parser.add_argument(
         "--include-today",
         action="store_true",
         help="also write today, marked is_partial (manual 'Sync now' only)",
@@ -443,11 +518,17 @@ def main() -> None:
     sessions_rows = db.table("sessions").select("id,date").execute().data
     session_map = build_session_map(sessions_rows)
 
+    if args.lifestyle_only:
+        for d in days:
+            sync_lifestyle(client, db, d)
+        return
+
     total_activities = 0
     for d in days:
         sync_biometrics(client, db, d, partial=d == today)
         sync_hr_daily(client, db, d, partial=d == today)
         total_activities += sync_activities(client, db, d, session_map)
+        sync_lifestyle(client, db, d)
 
     linked, still_null = repair_session_links(db, session_map)
 

@@ -14,6 +14,14 @@ export interface DailyFormState {
   cold_room: boolean
   breathing_exercises: boolean
   stretching: boolean
+  injured: boolean
+  travelling: boolean
+  melatonin: boolean
+  screens_before_bed: boolean
+  reading_in_bed: boolean
+  nasal_strips: boolean
+  cold_shower: boolean
+  journaling: boolean
   study_hours: number | null
   studyHoursTouched: boolean
   journal: string
@@ -31,6 +39,15 @@ export interface DailyPayload {
   cold_room: boolean
   breathing_exercises: boolean
   stretching: boolean
+  // v1.38: Garmin lifestyle-log behaviours; sync.py also writes these
+  injured: boolean
+  travelling: boolean
+  melatonin: boolean
+  screens_before_bed: boolean
+  reading_in_bed: boolean
+  nasal_strips: boolean
+  cold_shower: boolean
+  journaling: boolean
   study_hours: number | null
   journal: string | null
 }
@@ -46,6 +63,14 @@ export const emptyFormState: DailyFormState = {
   cold_room: false,
   breathing_exercises: false,
   stretching: false,
+  injured: false,
+  travelling: false,
+  melatonin: false,
+  screens_before_bed: false,
+  reading_in_bed: false,
+  nasal_strips: false,
+  cold_shower: false,
+  journaling: false,
   study_hours: null,
   studyHoursTouched: false,
   journal: '',
@@ -78,6 +103,14 @@ export function buildDailyPayload(state: DailyFormState, date: string): DailyPay
     cold_room: state.cold_room,
     breathing_exercises: state.breathing_exercises,
     stretching: state.stretching,
+    injured: state.injured,
+    travelling: state.travelling,
+    melatonin: state.melatonin,
+    screens_before_bed: state.screens_before_bed,
+    reading_in_bed: state.reading_in_bed,
+    nasal_strips: state.nasal_strips,
+    cold_shower: state.cold_shower,
+    journaling: state.journaling,
     // Untouched -> null, never 0. 0 is a real value once the stepper has
     // been touched (CLAUDE.md hard rule 12's null-vs-zero rule, extended
     // here to study_hours per DASHBOARD_SPEC.md §5).

@@ -13,6 +13,8 @@ const validState: DailyFormState = {
   cold_room: true,
   breathing_exercises: true,
   stretching: false,
+  injured: true,
+  melatonin: false,
   study_hours: 2.5,
   studyHoursTouched: true,
   journal: 'slept fine',
@@ -63,7 +65,7 @@ describe('buildDailyPayload', () => {
     expect(payload.journal).toBe('hello')
   })
 
-  it('emits all nine booleans as explicit booleans', () => {
+  it('emits all seventeen booleans as explicit booleans', () => {
     const payload = buildDailyPayload(validState, '2026-08-08')
     const booleanKeys: (keyof typeof payload)[] = [
       'illness',
@@ -75,6 +77,14 @@ describe('buildDailyPayload', () => {
       'cold_room',
       'breathing_exercises',
       'stretching',
+      'injured',
+      'travelling',
+      'melatonin',
+      'screens_before_bed',
+      'reading_in_bed',
+      'nasal_strips',
+      'cold_shower',
+      'journaling',
     ]
     for (const key of booleanKeys) {
       expect(typeof payload[key]).toBe('boolean')

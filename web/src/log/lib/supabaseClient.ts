@@ -37,6 +37,14 @@ export interface DailyRow {
   breathing_exercises: boolean | null
   stretching: boolean | null
   illness: boolean | null
+  injured: boolean | null
+  travelling: boolean | null
+  melatonin: boolean | null
+  screens_before_bed: boolean | null
+  reading_in_bed: boolean | null
+  nasal_strips: boolean | null
+  cold_shower: boolean | null
+  journaling: boolean | null
   study_hours: number | null
   journal: string | null
   updated_at: string

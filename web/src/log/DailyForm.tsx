@@ -29,6 +29,14 @@ function rowToFormState(row: DailyRow): DailyFormState {
     cold_room: row.cold_room ?? false,
     breathing_exercises: row.breathing_exercises ?? false,
     stretching: row.stretching ?? false,
+    injured: row.injured ?? false,
+    travelling: row.travelling ?? false,
+    melatonin: row.melatonin ?? false,
+    screens_before_bed: row.screens_before_bed ?? false,
+    reading_in_bed: row.reading_in_bed ?? false,
+    nasal_strips: row.nasal_strips ?? false,
+    cold_shower: row.cold_shower ?? false,
+    journaling: row.journaling ?? false,
     study_hours: row.study_hours,
     studyHoursTouched: row.study_hours !== null,
     journal: row.journal ?? '',
@@ -121,6 +129,16 @@ export default function DailyForm() {
           checked={formState.illness}
           onChange={(v) => setField('illness', v)}
         />
+        <ToggleRow
+          label="Injured"
+          checked={formState.injured}
+          onChange={(v) => setField('injured', v)}
+        />
+        <ToggleRow
+          label="Travelling / vacation"
+          checked={formState.travelling}
+          onChange={(v) => setField('travelling', v)}
+        />
       </div>
 
       <div className="group">
@@ -159,6 +177,26 @@ export default function DailyForm() {
           checked={formState.cold_room}
           onChange={(v) => setField('cold_room', v)}
         />
+        <ToggleRow
+          label="Screens before bed"
+          checked={formState.screens_before_bed}
+          onChange={(v) => setField('screens_before_bed', v)}
+        />
+        <ToggleRow
+          label="Reading in bed"
+          checked={formState.reading_in_bed}
+          onChange={(v) => setField('reading_in_bed', v)}
+        />
+        <ToggleRow
+          label="Nasal strips"
+          checked={formState.nasal_strips}
+          onChange={(v) => setField('nasal_strips', v)}
+        />
+        <ToggleRow
+          label="Melatonin"
+          checked={formState.melatonin}
+          onChange={(v) => setField('melatonin', v)}
+        />
       </div>
 
       <div className="group">
@@ -172,6 +210,16 @@ export default function DailyForm() {
           label="Stretching"
           checked={formState.stretching}
           onChange={(v) => setField('stretching', v)}
+        />
+        <ToggleRow
+          label="Cold shower / bath"
+          checked={formState.cold_shower}
+          onChange={(v) => setField('cold_shower', v)}
+        />
+        <ToggleRow
+          label="Journaling"
+          checked={formState.journaling}
+          onChange={(v) => setField('journaling', v)}
         />
       </div>
 

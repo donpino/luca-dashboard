@@ -233,3 +233,54 @@ def test_partial_flag_written_and_cleared_by_complete_resync():
     assert db.table("biometrics").rows["2026-10-28"]["is_partial"] is True
     sync_biometrics(Bio({}), db, d)  # next morning's scheduled run
     assert db.table("biometrics").rows["2026-10-28"]["is_partial"] is False
+
+
+# --- lifestyle log (v1.38) ----------------------------------------------------
+
+from types import SimpleNamespace
+
+from sync import lifestyle_answers, merge_lifestyle, sync_lifestyle
+
+
+def _report(**statuses):
+    names = {"alcohol": "Alcohol", "late_meal": "Late Meals", "melatonin": "Melatonin ", "injured": "Injured"}
+    return {
+        "dailyLogsReport": [
+            {"name": names[k], **({"logStatus": v} if v else {})} for k, v in statuses.items()
+        ]
+    }
+
+
+def test_lifestyle_unanswered_behaviour_is_absent_not_no():
+    # Melatonin's name carries Garmin's trailing space; no logStatus -> absent
+    answers = lifestyle_answers(_report(alcohol="NO", melatonin="YES", injured=None))
+    assert answers == {"alcohol": False, "melatonin": True}
+
+
+def test_lifestyle_unmapped_behaviour_skipped_and_named(capsys):
+    assert lifestyle_answers({"dailyLogsReport": [{"name": "Sauna", "logStatus": "YES"}]}) == {}
+    assert "Sauna" in capsys.readouterr().out
+
+
+def test_merge_yes_from_either_source_counts():
+    existing = {"alcohol": False, "late_meal": True, "melatonin": None}
+    updates = merge_lifestyle(existing, {"alcohol": True, "late_meal": False, "melatonin": False})
+    # Garmin yes overrides /log's untouched false; Garmin no never undoes a
+    # /log yes; Garmin no fills a NULL
+    assert updates == {"alcohol": True, "melatonin": False}
+
+
+def test_sync_lifestyle_never_touches_shin_or_journal():
+    db = FakeSupabase()
+    db.table("daily").rows["2026-10-28"] = {"date": "2026-10-28", "shin": 1, "journal": "x", "alcohol": False}
+    client = SimpleNamespace(get_lifestyle_logging_data=lambda ds: _report(alcohol="YES", injured="YES"))
+    sync_lifestyle(client, db, date(2026, 10, 28))
+    row = db.table("daily").rows["2026-10-28"]
+    assert row == {"date": "2026-10-28", "shin": 1, "journal": "x", "alcohol": True, "injured": True}
+
+
+def test_sync_lifestyle_writes_no_row_for_an_unlogged_day():
+    db = FakeSupabase()
+    client = SimpleNamespace(get_lifestyle_logging_data=lambda ds: _report(alcohol=None))
+    sync_lifestyle(client, db, date(2026, 10, 29))
+    assert db.table("daily").rows == {}

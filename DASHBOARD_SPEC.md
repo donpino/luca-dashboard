@@ -1,4 +1,4 @@
-# Training Dashboard — Build Spec v1.37
+# Training Dashboard — Build Spec v1.38
 
 **Athlete:** Luca · **Campaign:** middle-distance, Foundation block → 2032
 **Status:** Phase 1 complete — `daily` table, RLS/grants, `/log`,
@@ -2407,6 +2407,40 @@ activity in the same day still writes normally, `indoor_cardio` resolves
 to `'other'`, and a `TYPE_MAP` value-set assertion guards against a
 future typo landing outside `{'running', 'cycling', 'other'}`.
 
+**Amendments in v1.38 (29 Oct 2026)** — Garmin's lifestyle log feeds
+`daily`. The athlete already fills in Garmin Connect's lifestyle log
+daily (history from 11 Aug 2026); `python-garminconnect` 0.3.9 exposes it
+as `get_lifestyle_logging_data(date)` → `dailyLogsReport[]`, one entry per
+behaviour with `logStatus` YES / NO, or absent when not answered. The
+athlete's decision: fill `/log` from it, and add to `daily` every Garmin
+behaviour `/log` didn't have.
+
+- **Mapping (§5):** Alcohol → `alcohol`, Late Meals → `late_meal`,
+  Stretching → `stretching`, Illness → `illness`; new columns
+  `melatonin`, `injured`, `cold_shower`, `nasal_strips`, `travelling`,
+  `journaling`, `reading_in_bed`, `screens_before_bed` (migration 011).
+  Matched by behaviour **name**, not id — the athlete's custom Melatonin
+  behaviour has an account-specific id. An unlisted name is skipped and
+  named in the log, never guessed. *Screens Before Bed* is kept separate
+  from `device_in_bed` (phone in bed): related, not the same question.
+  Garmin's alcohol quantity is not stored — `alcohol` stays "any amount".
+- **Merge rule (§6): a yes from either source counts.** Garmin YES sets
+  the column true; Garmin NO fills it only while it is NULL, so it never
+  undoes a yes ticked on `/log`. Not "fill only NULLs": `/log` saves every
+  untouched toggle as `false`, so that rule would drop every Garmin yes
+  logged after the form was saved. Consequence: un-ticking on `/log` a yes
+  that Garmin still holds is reverted by the next sync inside its 3-day
+  window — correct it in Garmin. `shin`, `journal` and every non-Garmin
+  column are never in the sync's payload.
+- **Temporal semantics:** Garmin's `calendarDate` is the day the
+  behaviour happened — the same convention as `daily.date` (§5), so no
+  shift. `injured` and `travelling` are same-day states like `illness`
+  (date + 0); the rest are habits (date + 1).
+- A Garmin-only row has `shin` NULL — exactly "not logged" under §5's
+  null rule, so shin coverage is unaffected.
+- Backfilled 8 Aug – 28 Oct with `sync.py --lifestyle-only`; 79 days
+  written, a second run wrote nothing.
+
 **Amendments in v1.37 (29 Oct 2026)** — the Sleep score is rebuilt
 against the athlete's own history. Found on 29 Oct: the night of 28–29 Oct
 read **96** while Bevel gave ~70, and the athlete judged the night's
@@ -2743,13 +2777,15 @@ failed", while the scheduled sync is unaffected. Renewal steps: RUNBOOK §8.
 | `shin` | int 0–3, **nullable, no default** | **First field on the form.** Gates everything. See the null rule below. |
 | `creatine` | bool | prescribed daily, no cycling |
 | `protein_breakfast` | bool | the named fuelling gap |
-| `alcohol` | bool | **ticked = any alcohol consumed.** No ambiguity. |
+| `alcohol` | bool | **ticked = any alcohol consumed.** No ambiguity. `alcohol`, `late_meal`, `stretching` are also written from Garmin's lifestyle log — merge rule in §6 (v1.38). |
 | `late_meal` | bool | |
 | `device_in_bed` | bool | ticked = phone in bed |
 | `cold_room` | bool | |
 | `breathing_exercises` | bool | |
 | `stretching` | bool | recovery habit — **not** logged as a shin measure |
-| `illness` | bool | only habit with an unambiguous effect in prior data |
+| `illness` | bool | only habit with an unambiguous effect in prior data. Also written from Garmin's lifestyle log (v1.38). |
+| `injured`, `travelling` | bool | **v1.38, migration 011**, from Garmin's lifestyle log (Injured, Traveling/Vacation); same-day states like `illness` |
+| `melatonin`, `screens_before_bed`, `reading_in_bed`, `nasal_strips`, `cold_shower`, `journaling` | bool | **v1.38, migration 011**, from Garmin's lifestyle log; habits (date + 1 join). `journaling` is the habit, distinct from the `journal` text |
 | `study_hours` | numeric, nullable | captured now, rendered ~2027. Untouched submits `NULL`; `0` is a real value in term time. |
 | `journal` | text | prompt (v1.9, superseded — see below): *"What might affect tonight's sleep?"* |
 
@@ -2774,7 +2810,7 @@ amendment: the FR70's first night (7–8 Aug 2026) produced a row dated
 join to `biometrics.sleep_total_min` / `rhr` / `hrv_overnight` or similar
 must be at `daily.date + 1`, never same-date. `shin` and `illness` are the
 exception — same-day state, joined at date + 0, same as `shin_series`
-below. Full reasoning, the live-data check, and the precedent in
+below; v1.38's `injured` and `travelling` are too. Full reasoning, the live-data check, and the precedent in
 `impact_mechanics`'s own date+1/date+2 joins: see the v1.9 amendment
 above. Binding on §8.4 (Lab) and any future analysis.
 
@@ -3129,6 +3165,14 @@ sources under two different ids (Strava's and Garmin's own
 the ids never collide. Only the date boundary prevents that day being
 written twice under two rows.
 
+**Lifestyle log (v1.38).** Every synced date also reads
+`get_lifestyle_logging_data(date)` and upserts only the lifestyle columns
+of `daily` (§5 mapping), never `shin` or `journal`. Merge: Garmin YES →
+true; Garmin NO → false only where the column is NULL; an unanswered
+behaviour writes nothing, and a day with no answers writes no row.
+`sync.py --lifestyle-only` writes this alone (backfill). The service role
+gains insert/update on `daily` (migration 011).
+
 **Manual "Sync now" (v1.36).** `sync.py --include-today` appends today to the
 window and writes today's `biometrics` and `hr_daily` with `is_partial =
 true`; activities recorded so far are written normally (a recorded activity
@@ -3451,10 +3495,10 @@ tap gets filled for two weeks and then never again.
 | Order | Block | Fields | Notes |
 |---|---|---|---|
 | 1 | Date header | `date` | Defaults to today, **except before 04:00 local, when it defaults to yesterday.** Future dates are rejected silently — native `max` on the date input plus a guard in code — not with an error message; there is nothing to explain to the athlete about a date the picker never should have offered. |
-| 2 | **Status** | `shin` 0–3, `illness` | Four buttons, one row, ≥64 px, no default selection. Selected state readable without colour. Both fields gate interpretation of everything else — neither is a habit. |
+| 2 | **Status** | `shin` 0–3, `illness`, `injured`, `travelling` | Four buttons, one row, ≥64 px, no default selection. Selected state readable without colour. Both fields gate interpretation of everything else — neither is a habit. |
 | 3 | **Fuelling** | `creatine`, `protein_breakfast`, `alcohol`, `late_meal` | `alcohol` labelled "any amount". |
-| 4 | **Sleep setup** | `device_in_bed`, `cold_room` | |
-| 5 | **Recovery work** | `breathing_exercises`, `stretching` | `stretching` is a recovery habit, **not** a shin measure. |
+| 4 | **Sleep setup** | `device_in_bed`, `cold_room`, `screens_before_bed`, `reading_in_bed`, `nasal_strips`, `melatonin` | v1.38's Garmin behaviours arrive pre-filled once synced. |
+| 5 | **Recovery work** | `breathing_exercises`, `stretching`, `cold_shower`, `journaling` | `stretching` is a recovery habit, **not** a shin measure. |
 | 6 | **Study** | `study_hours` | Stepper, ±0.5, no numeric keyboard. Untouched = `NULL`. The field can be cleared back to untouched at any time — a `Clear` control, same null-vs-zero stakes as `shin` (§5): `0` is a real value once touched, never a placeholder for unanswered, and one accidental tap must not be able to turn an unlogged day into a permanent `0`. |
 | 7 | **Journal** | `journal` | Prompt is the label: *"What might affect tonight's sleep?"* (v1.9 — see §5's temporal semantics note; replaces the original, tense-ambiguous prompt). One line high, grows on focus. Optional. |
 | 8 | Sticky footer | Save | **Disabled until `shin` is answered.** The only required field. |
@@ -3601,6 +3645,7 @@ about a session, and fill-vs-hollow carries it without colour.
 | **2.5** *(added v1.35)* | 28 Oct 2026 | Recovery / Strain / Sleep scores (§7), migration 009 + ingest of `hr_daily` / `activity_hr` / sleep window, backfill from 8 Aug, `scores.json`, §8.1 Today and score detail pages rebuilt in the §10 v1.35 visual system. |
 | **2.6** *(added v1.36)* | 28 Oct 2026 | Strain on Banister TRIMP (20% sedentary floor); migration 010 (`is_partial`); `sync.py --include-today`; `/api/sync` Worker endpoint and the Today "Sync now" button. |
 | **2.7** *(added v1.37)* | 29 Oct 2026 | Sleep score on personal baselines with HRV/RHR (§7); Recovery's sleep term on `behavioural_score` vs own history. |
+| **2.8** *(added v1.38)* | 29 Oct 2026 | Garmin lifestyle log → `daily` (migration 011, `sync_lifestyle`, `/log` toggles), backfill from 11 Aug. |
 | **3** | +21 days on FR70 | HRV/RHR baselines established, bands become real, autoregulation panel on |
 | **4** | Oct, post-benchmark | Campaign page — trajectory vs floor/target/stretch |
 | **5** | 2027 | Lab unlocks, panel by panel, as each `min_n` is crossed |
